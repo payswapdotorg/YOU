@@ -1,0 +1,20 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://you.payswap.org/contracts/lab/v1/world.schema.json",
+  "title":"YOU Lab World v1",
+  "type":"object",
+  "required":["worldId","seed","actors","sensors","groundTruth"],
+  "properties":{
+    "worldId":{"type":"string"},
+    "seed":{"type":"integer"},
+    "actors":{"type":"array","items":{"type":"object"}},
+    "cameras":{"type":"array","items":{"type":"object"}},
+    "lighting":{"type":"object"},
+    "environment":{"type":"object"},
+    "sensors":{"type":"array","items":{"type":"object"}},
+    "noise":{"type":"object"},
+    "occlusions":{"type":"array","items":{"type":"object"}},
+    "groundTruth":{"type":"object"}
+  },
+  "additionalProperties":false
+}
