@@ -1,0 +1,25 @@
+openapi: 3.1.0
+info:
+  title: YOU API
+  version: 0.1.0
+servers:
+  - url: https://api.you.example/v1
+paths:
+  /twins:
+    post: {summary: Create Twin, responses: {"202": {description: Accepted}}}
+  /captures:
+    post: {summary: Start capture, responses: {"202": {description: Accepted}}}
+  /performances:
+    post: {summary: Create performance, responses: {"202": {description: Accepted}}}
+  /templates:
+    post: {summary: Register template, responses: {"202": {description: Accepted}}}
+  /renders:
+    post: {summary: Render reality, responses: {"202": {description: Accepted}}}
+  /try-ons:
+    post: {summary: Run virtual try-on, responses: {"202": {description: Accepted}}}
+  /agent-avatar-sessions:
+    post: {summary: Start agent avatar session, responses: {"202": {description: Accepted}}}
+  /consent-grants:
+    post: {summary: Grant scoped permission, responses: {"201": {description: Created}}}
+  /lab/runs:
+    post: {summary: Run Lab experiment, responses: {"202": {description: Accepted}}}
