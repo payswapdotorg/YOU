@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://you.payswap.org/contracts/htir/v1/htir.schema.json",
+  "title": "Human Twin Intermediate Representation v1",
+  "type": "object",
+  "required": ["twinId","version","morphology","geometry","appearance","provenance"],
+  "properties": {
+    "twinId": {"type":"string"},
+    "version": {"type":"integer","minimum":1},
+    "morphology": {"type":"object"},
+    "geometry": {"type":"object"},
+    "appearance": {"type":"object"},
+    "articulation": {"type":"object"},
+    "neuralAppearance": {"type":"object"},
+    "motionProfile": {"type":"object"},
+    "voice": {"type":["object","null"]},
+    "styleProfiles": {"type":"array","items":{"type":"object"}},
+    "confidence": {"type":"object"},
+    "provenance": {"type":"object"}
+  },
+  "additionalProperties": false
+}
