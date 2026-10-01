@@ -639,3 +639,21 @@ model UsageRecord {
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 }
+
+// ─── Object storage (db backend) ────────────────────────────────────────────
+// F9 finding (2026-10-01 station verification): the local-FS object store
+// (db/you-objects/) cannot write on Vercel serverless — the lambda bundle
+// root is read-only (live evidence: ENOENT mkdir '/var/task/db' on the
+// hosted upload path). YOU_STORAGE_BACKEND=db stores the same
+// content-addressed immutable objects as rows here, behind the unchanged
+// putObject/getObject seam + signed-URL capability model in
+// src/lib/you/core/storage.ts. Production target remains Cloudflare R2
+// (docs/DEPLOYMENT.md) — this is the hosted dev-tier stand-in, exactly like
+// SQLite stands in for Neon locally. Bytes maps to BLOB (sqlite) / bytea
+// (postgresql) — verified on both providers.
+model YouObject {
+  key       String   @id // content-addressed storage key: kind/<sha256>.<ext>
+  mime      String
+  bytes     Bytes
+  createdAt DateTime @default(now())
+}

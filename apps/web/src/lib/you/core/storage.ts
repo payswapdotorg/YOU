@@ -1,16 +1,39 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// YOU core — local object storage with signed URLs (Worker A lane)
+// YOU core — object storage with signed URLs (Worker A lane)
 // Local dev stand-in for Cloudflare R2 (docs/DEPLOYMENT.md: "local:
-// deterministic fixtures"). Bytes live under db/you-objects/. Keys are
-// content-addressed and immutable — putObject never overwrites.
-// Signed URLs are capabilities: GET /api/v1/storage/<key>?exp=<epochSec>&sig=<urlsafe-b64 hmac-sha256(key + '.' + exp, YOU_STORAGE_SECRET)>
+// deterministic fixtures"). Signed URLs are capabilities: GET /api/v1/storage/<key>?exp=<epochSec>&sig=<urlsafe-b64 hmac-sha256(key + '.' + exp, YOU_STORAGE_SECRET)>
+//
+// Backends (YOU_STORAGE_BACKEND, read per call — server env is fixed at boot):
+//   "fs" (default) — bytes live under db/you-objects/ (local dev only).
+//   "db"            — bytes live in the YouObject table (content-addressed
+//                     rows through the app database). Serverless-viable:
+//                     the F9 station verification (2026-10-01) proved the FS
+//                     backend cannot write on Vercel lambdas (read-only
+//                     bundle root: ENOENT mkdir '/var/task/db'). The db
+//                     backend is the hosted dev-tier stand-in, exactly like
+//                     SQLite stands in for Neon locally; the production
+//                     target remains Cloudflare R2 behind this same seam.
+// Keys are content-addressed and immutable in BOTH backends — putObject
+// never overwrites (a repeated key is byte-identical by construction).
 // ═══════════════════════════════════════════════════════════════════════════
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
+import { db } from '@/lib/db';
 
 const OBJECT_ROOT = path.join(process.cwd(), 'db', 'you-objects');
 const DEFAULT_TTL_SECONDS = 600;
+
+export type StorageBackend = 'fs' | 'db';
+
+function storageBackend(): StorageBackend {
+  const raw = (process.env.YOU_STORAGE_BACKEND ?? 'fs').trim().toLowerCase();
+  if (raw === 'db') return 'db';
+  if (raw === 'fs' || raw === '') return 'fs';
+  throw new Error(
+    `YOU_STORAGE_BACKEND must be "fs" or "db" (got "${raw}") — refusing to guess where bytes live`,
+  );
+}
 
 function storageSecret(): string {
   const secret = process.env.YOU_STORAGE_SECRET;
@@ -88,16 +111,34 @@ export async function putObject(
   const contentHash = sha256Buffer(buf);
   const storageKey = `${kind}/${contentHash}.${extFromMime(opts.mime)}`;
   if (!isSafeKey(storageKey)) throw new Error(`putObject: unsafe storage key "${storageKey}"`);
-  const abs = path.join(OBJECT_ROOT, storageKey);
-  await mkdir(path.dirname(abs), { recursive: true });
-  await writeFile(abs, buf, { flag: 'wx' }).catch((err: NodeJS.ErrnoException) => {
-    if (err.code !== 'EEXIST') throw err; // already stored — content-addressed, identical bytes
-  });
+  if (storageBackend() === 'db') {
+    // Prisma's Bytes input is Uint8Array<ArrayBuffer>; Node's Buffer is
+    // Buffer<ArrayBufferLike> — copy into a plain Uint8Array (≤10MB uploads,
+    // never a hot path). Content addressing makes the copy irrelevant to keying.
+    await db.youObject
+      .create({ data: { key: storageKey, mime: opts.mime.toLowerCase(), bytes: new Uint8Array(buf) } })
+      .catch((err: { code?: string; message?: string }) => {
+        // P2002 = unique-constraint: the content-addressed key already exists
+        // — identical bytes by construction, same semantics as the FS 'wx' path.
+        if (err?.code !== 'P2002') throw err;
+      });
+  } else {
+    const abs = path.join(OBJECT_ROOT, storageKey);
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, buf, { flag: 'wx' }).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EEXIST') throw err; // already stored — content-addressed, identical bytes
+    });
+  }
   return { storageKey, contentHash, bytes: buf.byteLength };
 }
 
 export async function getObject(key: string): Promise<Buffer | null> {
   if (!isSafeKey(key)) return null;
+  if (storageBackend() === 'db') {
+    const row = await db.youObject.findUnique({ where: { key } });
+    if (!row) return null;
+    return Buffer.from(row.bytes);
+  }
   const abs = path.join(OBJECT_ROOT, key);
   if (!abs.startsWith(OBJECT_ROOT + path.sep)) return null; // traversal guard (defense in depth)
   try {

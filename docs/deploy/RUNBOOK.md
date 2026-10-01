@@ -50,6 +50,7 @@ fixtures"):
 |---|---|---|
 | `DATABASE_URL` | Neon connection string (pooled endpoint) | see §2. Include `?sslmode=require` when Neon asks for it. |
 | `YOU_STORAGE_SECRET` | operator-generated 32+ byte random (e.g. `openssl rand -hex 32`) | HMAC secret for object-store signed URLs. **Local `.env.example` ships `dev-change-me` — never deploy that value.** Rotation invalidates all signed URLs (they expire in ≤600s anyway) but not stored objects. |
+| `YOU_STORAGE_BACKEND` | `"db"` on hosted | **Required on serverless** — see gap note G-7. The default `"fs"` backend writes under `apps/web/db/you-objects/`, which is read-only on Vercel lambdas (live evidence: `ENOENT: mkdir '/var/task/db'` on the hosted upload path, F9 checklist item 2, 2026-10-01). `"db"` stores the same content-addressed immutable objects as `YouObject` rows in the app database (works on SQLite locally and PostgreSQL/Neon hosted; push the schema first). |
 | z-ai SDK credentials | the SDK's own configuration env for the hosting environment | `src/lib/you/ai/zai.ts` is the single server-side entry point; the SDK is backend-only and must never be imported client-side. |
 | `NODE_ENV` | set by Vercel | — |
 
@@ -283,3 +284,18 @@ URL, in order (mirrors docs/DEPLOYMENT.md "Deployment gate"):
 - **G-6 (info):** webhook deliveries have no retry scheduler at the pinned
   base (single attempt, verbatim record) — acceptable for preview, decide
   before production SLAs.
+- **G-7 (high, found live 2026-10-01):** the FS object store is
+  non-viable on serverless. F9 checklist item 2 executed against the first
+  production deployment failed with `500 internal_error — ENOENT: no such
+  file or directory, mkdir '/var/task/db'` (the Vercel lambda bundle root
+  is read-only; the local dev adapter assumed a writable cwd). Fix landed
+  the same day: `YOU_STORAGE_BACKEND=db` stores content-addressed immutable
+  objects as `YouObject` rows through the app database — the signed-URL
+  capability model, key format, and `putObject`/`getObject` seam are
+  UNCHANGED (battery W3C signed-URL semantics still hold; bytes are
+  served by the same capability-checked route). This is the hosted
+  dev-tier stand-in exactly as SQLite stands in for Neon locally; the
+  production target remains Cloudflare R2 (Strategy 1 in §"object store")
+  behind the same seam. Database sizing note: Neon free tier (0.5GB) holds
+  ~50 max-size (10MB) evidence uploads — ample for preview/verification;
+  R2 becomes the pressure-release valve before production scale.

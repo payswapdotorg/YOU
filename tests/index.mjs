@@ -13,6 +13,14 @@
 // The aggregated flag below is set AFTER the imports evaluate but BEFORE any
 // test executes, telling the W4.A hardening suite to reuse (not re-boot) the
 // verification-flow server published on globalThis.
+//
+// NOTE (G-7 fix, 2026-10-01): tests/contract/storage-db.test.mjs is
+// DELIBERATELY NOT imported here — it asserts the YOU_STORAGE_BACKEND=db
+// object store and therefore always boots its OWN server with that env
+// override (the aggregate shares one fs-backend server). The full station
+// gate is BOTH commands, in order:
+//   node --test tests/            (aggregated, fs backend — the default path)
+//   node --test tests/contract/storage-db.test.mjs   (standalone, db backend)
 import './contract/smoke.test.mjs';
 import './contract/verification-flow.test.mjs';
 import './contract/hardening.test.mjs';
