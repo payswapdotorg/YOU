@@ -27,7 +27,8 @@ export async function POST(request: Request): Promise<Response> {
     await emitEvent(tenantId, 'session.created', 'session', session.id, { userId });
 
     return Response.json(sessionInfo(tenant, user), {
-      headers: { 'set-cookie': sessionCookieHeader(token) },
+      // request passed for F-03: Secure is appended when x-forwarded-proto is https
+      headers: { 'set-cookie': sessionCookieHeader(token, request) },
     });
   });
 }

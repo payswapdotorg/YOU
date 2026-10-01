@@ -1,14 +1,20 @@
 // POST /api/v1/templates — register a template (W2.B persistence half).
 // Packages a capture checklist, scene recipes and style presets as a versioned
-// record. Supports Idempotency-Key (§API rules): a replay with the same key
-// returns the existing record (200) instead of creating a duplicate.
+// record. Supports Idempotency-Key (§API rules) with body-fingerprint binding
+// (W4.A F-01): a replay with the same key and the SAME body returns the
+// existing record (200); a replay with a DIFFERENT body returns
+// 409 idempotency_conflict — the stored record is never returned for a
+// different payload.
 // GET  /api/v1/templates — list templates for the tenant (additive read route
 // consistent with the established list-route pattern: GET /twins, /captures…).
 import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
 import { badRequest, getIdempotencyKey, handleRoute, readJsonBody } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
-import { parseTemplateBody, TemplateBodyError, templateView } from '@/lib/you/core/templates';
+import { assertSameBodyFingerprint } from '@/lib/you/core/idempotency';
+import {
+  parseTemplateBody, TemplateBodyError, templateCreateProjection, templateRowProjection, templateView,
+} from '@/lib/you/core/templates';
 
 export async function GET(request: Request): Promise<Response> {
   return handleRoute(async () => {
@@ -37,13 +43,20 @@ export async function POST(request: Request): Promise<Response> {
 
     const idempotencyKey = getIdempotencyKey(request);
     if (idempotencyKey) {
-      const existing = await db.template.findUnique({ where: { idempotencyKey } });
+      const existing = await db.template.findUnique({
+        where: { idempotencyKey },
+        include: { recipes: true },
+      });
       if (existing) {
-        const withRecipes = await db.template.findUnique({
-          where: { id: existing.id },
-          include: { recipes: true },
-        });
-        return Response.json(templateView(withRecipes ?? existing, withRecipes?.recipes ?? []), { status: 200 });
+        // F-01: same key + different body → 409 idempotency_conflict; the
+        // stored template is never returned for a different payload
+        assertSameBodyFingerprint(
+          idempotencyKey,
+          'template-create body',
+          templateRowProjection(existing, existing.recipes),
+          templateCreateProjection(parsed),
+        );
+        return Response.json(templateView(existing, existing.recipes), { status: 200 });
       }
     }
 
@@ -68,13 +81,22 @@ export async function POST(request: Request): Promise<Response> {
         include: { recipes: true },
       });
     } catch (err) {
-      // concurrent duplicate idempotency-key insert → return the winner
+      // concurrent duplicate idempotency-key insert → same-body race returns
+      // the winner; a different-body race is a 409 conflict (F-01)
       if (idempotencyKey && (err as { code?: string }).code === 'P2002') {
         const existing = await db.template.findUnique({
           where: { idempotencyKey },
           include: { recipes: true },
         });
-        if (existing) return Response.json(templateView(existing, existing.recipes), { status: 200 });
+        if (existing) {
+          assertSameBodyFingerprint(
+            idempotencyKey,
+            'template-create body',
+            templateRowProjection(existing, existing.recipes),
+            templateCreateProjection(parsed),
+          );
+          return Response.json(templateView(existing, existing.recipes), { status: 200 });
+        }
       }
       throw err;
     }

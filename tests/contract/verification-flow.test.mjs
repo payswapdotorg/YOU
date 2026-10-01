@@ -159,7 +159,7 @@ async function startServer() {
     if (child.exitCode !== null) assert.fail(`next dev exited with code ${child.exitCode} before becoming ready`);
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) { base = url; return; }
+      if (res.ok) { base = url; globalThis.__YOU_TEST_BASE__ = url; return; } // shared with sibling suites (w4a hardening tests)
     } catch { /* not up yet */ }
     if (Date.now() > deadline) assert.fail(`next dev did not become ready on ${url} within 120s`);
     await new Promise((r) => setTimeout(r, 1000));
@@ -169,6 +169,7 @@ async function startServer() {
 before(async () => {
   if (base) {
     console.log(`[w3a-tests] reusing booted server at ${base} (YOU_TEST_BASE)`);
+    globalThis.__YOU_TEST_BASE__ = base; // share with sibling suites in this process (w4a hardening tests)
     return;
   }
   console.log('[w3a-tests] booting apps/web (next dev) on a free port…');

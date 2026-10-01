@@ -213,8 +213,13 @@ xassert W3C-033 "replay returns the SAME template id" ".id==\"$TEMPLATE_ID\"" "$
 CNT=$(dbp count-templates w3c-idem-001); echo "── db-probe: template count for key w3c-idem-001 → $CNT ──" >> "$TRANSCRIPT"; echo "" >> "$TRANSCRIPT"
 xassert W3C-034 "exactly ONE template row for the idempotency key (no duplicates)" '.count==1' "$CNT"
 
-runcheck W3C-035 "200 J" "IDEMPOTENCY REPLAY: same key, DIFFERENT body → 200 with existing (recorded behavior)" -X POST "$BASE/api/v1/templates" -b "$COOKIES_A" -H 'content-type: application/json' -H 'x-idempotency-key: w3c-idem-001' --data '{"name":"w3c-audit-template-CHANGED","description":"different body"}'
-xassert W3C-035 "replay still returns the SAME template id (first-write wins)" ".id==\"$TEMPLATE_ID\"" "$LAST_BODY"
+runcheck W3C-035 "409 E" "IDEMPOTENCY CONFLICT (F-01): same key, DIFFERENT body → 409 idempotency_conflict (body-fingerprint binding; the stored record is never returned for a different payload)" -X POST "$BASE/api/v1/templates" -b "$COOKIES_A" -H 'content-type: application/json' -H 'x-idempotency-key: w3c-idem-001' --data '{"name":"w3c-audit-template-CHANGED","description":"different body"}'
+xassert W3C-035 "error.code == idempotency_conflict + message names the key/fingerprints" '.error.code=="idempotency_conflict" and (.error.message|contains("w3c-idem-001")) and (.error.message|contains("sha256:"))' "$LAST_BODY"
+
+CNT2=$(dbp count-templates w3c-idem-001); echo "── db-probe: template count for key w3c-idem-001 after conflict → $CNT2 ──" >> "$TRANSCRIPT"; echo "" >> "$TRANSCRIPT"
+xassert W3C-035b "still exactly ONE template row after the conflicting replay (no duplicate created)" '.count==1' "$CNT2"
+runcheck W3C-035c "200 J" "IDEMPOTENCY REPLAY (canonical form): same key, same body with REORDERED JSON keys → 200 with existing record" -X POST "$BASE/api/v1/templates" -b "$COOKIES_A" -H 'content-type: application/json' -H 'x-idempotency-key: w3c-idem-001' --data "{\"description\":\"battery template\",\"name\":\"w3c-audit-template\",\"status\":\"draft\",\"scenes\":[{\"parameters\":{\"angle\":\"front\"},\"name\":\"scene-one\"}]}"
+xassert W3C-035c "canonical replay returns the SAME template id (stable key order)" ".id==\"$TEMPLATE_ID\"" "$LAST_BODY"
 
 runcheck W3C-036 "202 J" "IDEMPOTENCY: POST compile with key w3c-compile-002 → 202" -X POST "$BASE/api/v1/twins/$TWIN_A/compile" -b "$COOKIES_A" -H 'content-type: application/json' -H 'x-idempotency-key: w3c-compile-002' --data '{}'
 JOB_IDEM=$(jsonval '.jobId'); save_state "JOB_IDEM=$JOB_IDEM"
@@ -224,6 +229,12 @@ xassert W3C-037 "replay returns the SAME jobId" ".jobId==\"$JOB_IDEM\"" "$LAST_B
 
 CNTJ=$(dbp count-jobs w3c-compile-002); echo "── db-probe: job count for key w3c-compile-002 → $CNTJ ──" >> "$TRANSCRIPT"; echo "" >> "$TRANSCRIPT"
 xassert W3C-038 "exactly ONE job row for the idempotency key" '.count==1' "$CNTJ"
+
+runcheck W3C-039 "409 E" "IDEMPOTENCY CONFLICT (F-01): compile same key, DIFFERENT body (style) → 409 idempotency_conflict" -X POST "$BASE/api/v1/twins/$TWIN_A/compile" -b "$COOKIES_A" -H 'content-type: application/json' -H 'x-idempotency-key: w3c-compile-002' --data '{"style":"anime"}'
+xassert W3C-039 "error.code == idempotency_conflict (job input fingerprint mismatch)" '.error.code=="idempotency_conflict"' "$LAST_BODY"
+
+CNTJ2=$(dbp count-jobs w3c-compile-002); echo "── db-probe: job count for key w3c-compile-002 after conflict → $CNTJ2 ──" >> "$TRANSCRIPT"; echo "" >> "$TRANSCRIPT"
+xassert W3C-039b "still exactly ONE job row after the conflicting compile replay" '.count==1' "$CNTJ2"
 
 fi # ── end part 1 ──
 
@@ -373,7 +384,8 @@ printf '%s' "$DELIV" | jq -e 'length>=1 and all(.[]; .status=="delivered" and .a
 
 runcheck W3C-142 "204" "DELETE /webhooks/:id → 204" -X DELETE "$BASE/api/v1/webhooks/$WEBHOOK_ID" -b "$COOKIES_A"
 
-runcheck W3C-143 "INFO" "UNMATCHED ROUTE: GET /api/v1/nonexistent → record verbatim (outside API route set)" "$BASE/api/v1/nonexistent"
+runcheck W3C-143 "404 E" "UNMATCHED ROUTE (F-02): GET /api/v1/nonexistent → JSON not_found envelope (never framework HTML)" "$BASE/api/v1/nonexistent"
+xassert W3C-143 "error.code == not_found" '.error.code=="not_found"' "$LAST_BODY"
 runcheck W3C-144 "400 E" "MALFORMED JSON BODY: POST /twins with invalid JSON → validation envelope" -X POST "$BASE/api/v1/twins" -b "$COOKIES_A" -H 'content-type: application/json' --data '{"displayName": '
 runcheck W3C-145 "400 E" "MISSING REQUIRED FIELD: POST /twins without displayName → validation envelope" -X POST "$BASE/api/v1/twins" -b "$COOKIES_A" -H 'content-type: application/json' --data '{}'
 

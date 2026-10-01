@@ -4,7 +4,14 @@
 // active endpoints subscribed to the type, then attempts actual delivery in
 // the background (5s timeout; wave-1 records attempts honestly, no retry
 // scheduler). audit() writes the immutable AuditEvent compliance trail.
+//
+// W4.A F-04: every delivery is SIGNED — receivers verify
+//   X-You-Signature: sha256=HMAC-SHA256(secret, timestamp + "." + rawBody)
+//   X-You-Timestamp: <unix-seconds>
+// over the exact raw body bytes sent (see docs/API_CONTRACTS.md §Webhook
+// deliveries). The no-retry-scheduler limitation is unchanged (documented).
 // ═══════════════════════════════════════════════════════════════════════════
+import { createHmac } from 'crypto';
 import type { AuthContext } from './auth';
 import { db } from '@/lib/db';
 import { parseJson } from './views';
@@ -52,6 +59,11 @@ export async function emitEvent(
   }
 }
 
+/** F-04: sign `timestamp + "." + rawBody` with the endpoint's stored secret. */
+export function webhookSignature(secret: string, timestamp: string, rawBody: string): string {
+  return createHmac('sha256', secret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex');
+}
+
 async function deliverPending(deliveryIds: string[]): Promise<void> {
   for (const id of deliveryIds) {
     try {
@@ -72,9 +84,19 @@ async function deliverPending(deliveryIds: string[]): Promise<void> {
 
       let outcome: { status: 'delivered' | 'failed'; error?: string };
       try {
+        // F-04: signed delivery — signature over timestamp + '.' + raw body
+        // with the endpoint's stored secret (WebhookEndpoint.secret, never
+        // exposed by the API; receivers read it from their registration flow)
+        const timestamp = Math.floor(Date.now() / 1000).toString();
+        const signature = webhookSignature(delivery.endpoint.secret, timestamp, body);
         const res = await fetch(delivery.endpoint.url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'user-agent': 'you-webhooks/1' },
+          headers: {
+            'content-type': 'application/json',
+            'user-agent': 'you-webhooks/1',
+            'x-you-timestamp': timestamp,
+            'x-you-signature': `sha256=${signature}`,
+          },
           body,
           signal: AbortSignal.timeout(5000),
         });

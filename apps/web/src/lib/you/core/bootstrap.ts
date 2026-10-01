@@ -50,8 +50,18 @@ export function newSessionToken(): string {
   return randomBytes(32).toString('hex'); // 64 hex chars
 }
 
-export function sessionCookieHeader(token: string): string {
-  return `you_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}`;
+/**
+ * Set-Cookie value for the session token. F-03 (W4.A): adds `Secure` when the
+ * request arrived over HTTPS — behind Vercel the edge terminates TLS and the
+ * app sees `x-forwarded-proto: https`. Local HTTP dev keeps the cookie
+ * without `Secure` (it could never be sent back otherwise). HttpOnly and
+ * SameSite=Lax always hold; the cookie name is unchanged (renaming would
+ * break existing sessions — the `__Host-` prefix idea stays deferred).
+ */
+export function sessionCookieHeader(token: string, request?: Request): string {
+  const forwardedProto = request?.headers.get('x-forwarded-proto')?.trim().toLowerCase();
+  const secure = forwardedProto === 'https' ? '; Secure' : '';
+  return `you_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}${secure}`;
 }
 
 export function sessionInfo(tenant: { id: string; name: string; slug: string }, user: { id: string; email: string; name: string; role: string }): SessionInfo {

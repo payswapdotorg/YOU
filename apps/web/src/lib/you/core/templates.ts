@@ -18,6 +18,7 @@ import { db } from '@/lib/db';
 import { registerExecutor } from '../lab/executors';
 import type { CaptureRegion, JobKind, RenderStyle } from '../contracts';
 import { BASE_CHECKLIST } from './checklist';
+import { canonicalJson } from './idempotency';
 import { emitEvent, recordUsage } from './events';
 import { parseJson } from './views';
 
@@ -265,6 +266,62 @@ export function parseTemplateBody(body: Record<string, unknown>): ParsedTemplate
   };
 
   return { name, description, status, manifest, scenes: scenes ?? [] };
+}
+
+// ─── Idempotency body-fingerprint projections (W4.A F-01) ────────────────────
+// A template create persists the PARSED body (name/description/status/manifest
+// + SceneRecipe rows). To detect a different-body replay of the same
+// X-Idempotency-Key we fingerprint the SAME projection on both sides: the
+// incoming parsed body, and the projection reconstructed from the stored row.
+// No schema change — the fingerprint derives from what is already persisted.
+
+/** Canonical scene order (Prisma relation order is not guaranteed). */
+function byCanonicalScene(
+  a: { name: string; parameters: Record<string, unknown> },
+  b: { name: string; parameters: Record<string, unknown> },
+): number {
+  const ca = canonicalJson(a);
+  const cb = canonicalJson(b);
+  return ca < cb ? -1 : ca > cb ? 1 : 0;
+}
+
+/** Fingerprint projection of an incoming (parsed) template create body. */
+export function templateCreateProjection(parsed: ParsedTemplateBody): {
+  name: string;
+  description: string | null;
+  status: string;
+  manifest: TemplateManifest;
+  scenes: { name: string; parameters: Record<string, unknown> }[];
+} {
+  return {
+    name: parsed.name,
+    description: parsed.description,
+    status: parsed.status,
+    manifest: parsed.manifest,
+    scenes: [...parsed.scenes].sort(byCanonicalScene),
+  };
+}
+
+/** The same projection reconstructed from a stored Template row + its recipes. */
+export function templateRowProjection(
+  t: Pick<Template, 'name' | 'description' | 'status' | 'manifest'>,
+  recipes: SceneRecipe[],
+): {
+  name: string;
+  description: string | null;
+  status: string;
+  manifest: TemplateManifest;
+  scenes: { name: string; parameters: Record<string, unknown> }[];
+} {
+  return {
+    name: t.name,
+    description: t.description,
+    status: t.status,
+    manifest: parseJson<TemplateManifest>(t.manifest, defaultTemplateManifest()),
+    scenes: recipes
+      .map((r) => ({ name: r.name, parameters: parseJson<Record<string, unknown>>(r.parameters, {}) }))
+      .sort(byCanonicalScene),
+  };
 }
 
 // ─── Deterministic coverage analysis (the analyze job's computation) ─────────
