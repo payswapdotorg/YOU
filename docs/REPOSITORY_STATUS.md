@@ -19,4 +19,8 @@ The canonical loop runs end-to-end in the integration sandbox (Next.js 16 single
 - No test files in the sandbox app (environment constraint); verification is browser-driven evidence.
 
 ## CI
-GitHub Actions runs docs/contracts checks for this repo. The implemented app lives in the integration sandbox, not in this repository yet; promotion of the implementation source into this repo is a wave-2 decision for the TL.
+GitHub Actions runs docs/contracts checks for this repo. 2026-10-01: the TL
+wave-2 decision was executed — the wave-1 implementation source now lives in
+this repository at `apps/web` (branch `wave-2/promote-studio`, merged to
+main). The integration sandbox remains the live verification station (replay
+console + browser-driven E2E evidence).
