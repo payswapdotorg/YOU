@@ -1,19 +1,42 @@
 # Technology Survey — Baseline for Lab
 
-Checked 2026-10-01. This is a research map, not a dependency list.
+Checked 2026-10-01. This is a research map, not a dependency list. Candidates must be rechecked for version, weights, dataset and terms before promotion.
 
-## Open source / research
-COLMAP and AliceVision/Meshroom cover camera calibration and photogrammetry. SAM 2, MMPose and related libraries address segmentation/pose. SMPL-X provides a unified expressive body/hand/face parameterization. PIFu/PIFuHD, ICON and ECON demonstrate clothed-human reconstruction. HUGS, GaussianAvatar, GoMAvatar and HAHA explore animatable Gaussian/mesh human avatars. LivePortrait addresses portrait animation. Tencent Hunyuan repositories cover 3D generation and audio-driven human animation/video. Open ecosystems on Hugging Face and GitHub should feed the Technology Registry.
+## Open-source/research pool
+COLMAP: camera calibration/photogrammetry — https://github.com/colmap/colmap
+AliceVision/Meshroom: node-based photogrammetry — https://github.com/alicevision/Meshroom
+SAM 2: segmentation/video object tracking — https://github.com/facebookresearch/sam2
+SMPL-X: expressive body/hand/face model — https://smpl-x.is.tue.mpg.de/
+PIFu/PIFuHD: clothed-human reconstruction — https://github.com/facebookresearch/pifuhd
+ICON/ECON: clothed-human reconstruction research — https://github.com/yuliangxiu/icon and https://github.com/YuliangXiu/ECON
+HUGS: human Gaussian avatar reconstruction — https://github.com/apple/ml-hugs
+GaussianAvatar: single-video animatable Gaussian human — https://github.com/aipixel/GaussianAvatar
+GoMAvatar: Gaussians-on-Mesh human avatar — https://github.com/wenj/GoMAvatar
+HAHA: highly articulated Gaussian human with textured mesh prior — https://github.com/david-svitov/HAHA
+LivePortrait: portrait animation — https://github.com/KlingAIResearch/LivePortrait
+Hunyuan3D-2.1: image-to-3D/PBR asset generation — https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1
+HunyuanVideo-Avatar: audio-driven human animation — https://github.com/Tencent-Hunyuan/HunyuanVideo-Avatar
 
-Commercial/model-provider examples
-Google Virtual Try-On / Vertex AI, HeyGen Avatar IV, Tavus, D-ID, Synthesia, NVIDIA ACE, MetaHuman and Autodesk Flow Studio demonstrate portions of the commercial digital-human stack.
+The GoMAvatar repo also points to newer research such as LIFe-GoM and NoPo-Avatar; these should be added by Worker C during the technology scan.
 
-Relevant cases
-- Google's VTO validates API-level personalized commerce.
-- HeyGen demonstrates programmatic image+script -> talking avatar video.
-- NVIDIA ACE decomposes digital humans into voice, animation and intelligence modules.
-- Autodesk Flow Studio shows convergence of generation, rigging and neural finishing.
-- Sporta demonstrates a technology-neutral adapter/benchmark/compute/Lab architecture and a strict three-worker ownership/integration pattern.
+## Closed/commercial/provider pool
+Google Vertex AI Virtual Try-On — https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-virtual-try-on
+HeyGen Avatar IV API — https://www.heygen.com/blog/announcing-the-avatar-iv-api
+Tavus — https://www.tavus.io/
+D-ID — https://docs.d-id.com/
+Synthesia API — https://docs.synthesia.io/
+NVIDIA ACE — https://www.nvidia.com/en-us/ai-data-science/ai-agents/
+MetaHuman — https://www.unrealengine.com/en-US/metahuman
+Autodesk Flow Studio — https://www.autodesk.com/products/flow-studio/overview
+Rokoko — https://www.rokoko.com/products/vision
 
-## Research rule
-The Lab may characterize any publicly documented or authorized system, but must not circumvent authentication, rate limits, encryption, paywalls, or access controls. For competitors, reproduce observable behavior and published claims rather than protected internals.
+## Important current observations
+Gaussian human research supports the chosen hybrid mesh/neural direction. HAHA explicitly combines Gaussian splatting with a textured mesh and SMPL-X control, while GoMAvatar studies Gaussians-on-Mesh. The current Hunyuan3D repository includes production-oriented API/server material and PBR texture synthesis.
+
+HeyGen's Avatar IV API demonstrates programmatic photo+script -> talking video with expressive facial motion and gestures. Autodesk's April 2026 Flow Studio update adds AI rigging and a neural layer, reinforcing the convergence of asset generation, rigging and neural finishing.
+
+## Lab rule
+YOU must compare capabilities rather than copy vendors. Closed systems may be benchmarked through public documentation, observable public outputs and authorized APIs. Never bypass authentication, rate limits, encryption, paywalls, licensing or technical access controls.
+
+## License rule
+Record source-code license, model-weight license, dataset license and provider terms separately. A permissive repository license does not imply commercial freedom for its weights/dependencies.
