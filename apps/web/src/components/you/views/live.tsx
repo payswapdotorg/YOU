@@ -1,10 +1,15 @@
 'use client';
 // ═══════════════════════════════════════════════════════════════════════════
 // Live — honest roadmap surface.
-// Realtime WebRTC avatar sessions unlock in Stage 6 (ecosystem).
+// Re-verified W3.B against the codebase: realtime WebRTC avatar sessions are
+// still NOT implemented (no /api/v1/live-sessions route exists; Stage 6).
+// What IS real today: the offline loop (twins, captures, performances,
+// renders, artifacts), agent avatar sessions with live listening/thinking/
+// speaking state visualization, and template persistence + deterministic
+// coverage analysis (POST/GET /api/v1/templates, POST /templates/:id/analyze).
 // No fake sessions or local-only pseudo-persistence here.
 // ═══════════════════════════════════════════════════════════════════════════
-import { Radio, Map, ShieldCheck } from 'lucide-react';
+import { Radio, Map, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { EmptyState, PageHeader, SectionCard } from '@/components/you/shared/primitives';
 import { Badge } from '@/components/ui/badge';
 
@@ -32,17 +37,31 @@ export function LiveView() {
             <li className="flex gap-2"><span className="mt-1.5 size-1 shrink-0 rounded-full bg-primary/70" aria-hidden />Enforce scoped consent per session; every recorded frame references its grant.</li>
           </ul>
         </SectionCard>
-        <SectionCard title="Why it’s gated" icon={ShieldCheck}>
-          <p className="text-sm text-muted-foreground">
-            Realtime transport is an ecosystem capability (Stage 6 — try-on, game exports, realtime WebRTC, AR). The
-            offline loop — capture → twin → performance → render → artifact — lands first, and live sessions reuse the
-            same performance-state contracts.
-          </p>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Roadmap reference:{' '}
-            <span className="rounded border bg-muted/50 px-1.5 py-0.5 font-mono text-xs text-foreground/80">docs/IMPLEMENTATION_PLAN.md</span>{' '}
-            — Stage 6 · ecosystem.
-          </p>
+        <SectionCard title="What’s real today vs. what’s gated" icon={ShieldCheck}>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <div>
+              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                <BadgeCheck className="size-3.5" aria-hidden /> Real now
+              </div>
+              <ul className="space-y-1.5">
+                <li>The offline loop — capture → twin → performance → render → artifact — is implemented and inspectable across the Build views.</li>
+                <li>Templates persist as versioned manifests (capture checklist, scene recipes, style presets) with deterministic coverage analysis.</li>
+                <li>Agent avatar sessions already visualize live listening / thinking / speaking state per turn (Embodiment view).</li>
+              </ul>
+            </div>
+            <div>
+              <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Map className="size-3.5" aria-hidden /> Still gated (Stage 6)
+              </div>
+              <ul className="space-y-1.5">
+                <li>The realtime transport itself: WebRTC media streams and live performance-event channels do not exist yet — there is no <span className="font-mono text-xs">/api/v1/live-sessions</span> route in this build.</li>
+                <li>Live session lifecycle (open / drive / close) and per-session consent enforcement land with that transport.</li>
+              </ul>
+            </div>
+            <p>
+              Realtime is an ecosystem capability (Stage 6 — try-on, game exports, realtime WebRTC, AR). Live sessions will reuse the same performance-state contracts the offline loop already exercises.
+            </p>
+          </div>
         </SectionCard>
       </div>
     </div>

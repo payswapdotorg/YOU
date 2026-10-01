@@ -9,6 +9,10 @@ import type {
   TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary,
   WebhookEndpointView, ConsentScope, CaptureRegion,
 } from '../contracts';
+// Template view types are lane-owned by core/templates (W2.B) — type-only
+// import keeps the client drift-free against the server's templateView shape
+// and is fully erased at compile time (no server code reaches the bundle).
+import type { TemplateView } from '../core/templates';
 
 const BASE = '/api/v1';
 
@@ -108,6 +112,22 @@ export const api = {
     }, idem?: string) =>
       call<{ jobId: string }>('/renders', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     get: (id: string) => call<RenderJobView>(`/renders/${id}`),
+  },
+
+  // ─── Templates ────────────────────────────────────────────────────────────
+  // docs/API_CONTRACTS.md §Templates and scenes (W2.B persistence + analyze).
+  templates: {
+    list: () => call<TemplateView[]>('/templates'),
+    get: (id: string) => call<TemplateView>(`/templates/${id}`),
+    create: (body: {
+      name: string; description?: string; status?: 'draft' | 'published'; notes?: string;
+      captureChecklist?: { item: string; capability: string; region: CaptureRegion; optional?: boolean }[];
+      scenes?: { name: string; parameters?: Record<string, unknown> }[];
+      stylePresets?: { name: string; style: RenderStyle; params?: Record<string, unknown> }[];
+    }, idem?: string) =>
+      call<TemplateView>('/templates', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    analyze: (id: string, idem?: string) =>
+      call<{ jobId: string }>(`/templates/${id}/analyze`, { method: 'POST', body: JSON.stringify({}), idempotencyKey: idem }),
   },
 
   // ─── Agent avatars ────────────────────────────────────────────────────────
