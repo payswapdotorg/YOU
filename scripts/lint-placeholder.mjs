@@ -1,0 +1,1 @@
+console.log("YOU lint gate placeholder: service-specific linters are enabled as each lane lands.");
