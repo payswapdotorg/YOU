@@ -13,8 +13,16 @@ import type { JobContext, JobKind, JobStep, JobState } from '../contracts';
 import { emitEvent, recordUsage } from './events';
 import { parseJson } from './views';
 
+/**
+ * W2.A lane-local widening: the frozen contracts JobKind union (TL-owned,
+ * src/lib/you/contracts/index.ts) does not yet include 'template.analyze'.
+ * The value flows through Job.kind rows/views unchanged; TL should add the
+ * union member at landing (see w2a-report.md compatibility notes).
+ */
+export type DurableJobKind = JobKind | 'template.analyze';
+
 /** Per-kind step templates — honest stage maps executors advance via report(). */
-const STEP_TEMPLATES: Record<JobKind, { key: string; label: string }[]> = {
+const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> = {
   'capture.quality': [
     { key: 'validate', label: 'Validate evidence set' },
     { key: 'analyze', label: 'Analyze quality and coverage' },
@@ -54,9 +62,17 @@ const STEP_TEMPLATES: Record<JobKind, { key: string; label: string }[]> = {
     { key: 'failures', label: 'Record failure cases' },
     { key: 'promote', label: 'Promote draft pipeline' },
   ],
+  // W2.A — async durable analyze job for POST /templates/:id/analyze
+  'template.analyze': [
+    { key: 'validate', label: 'Load and validate template' },
+    { key: 'checklist', label: 'Analyze capture checklist coverage' },
+    { key: 'scenes', label: 'Validate scene recipes' },
+    { key: 'styles', label: 'Validate style presets' },
+    { key: 'persist', label: 'Persist analysis on template' },
+  ],
 };
 
-export function stepsForKind(kind: JobKind): JobStep[] {
+export function stepsForKind(kind: DurableJobKind): JobStep[] {
   return (STEP_TEMPLATES[kind] ?? []).map((s) => ({ key: s.key, label: s.label, status: 'pending' as const }));
 }
 
@@ -67,7 +83,7 @@ export function stepsForKind(kind: JobKind): JobStep[] {
  */
 export async function createJob(
   tenantId: string,
-  kind: JobKind,
+  kind: DurableJobKind,
   input: Record<string, unknown>,
   idempotencyKey?: string,
 ): Promise<Job> {
@@ -110,7 +126,7 @@ export async function runJob(jobId: string): Promise<void> {
   if (!job) return;
   if (job.status !== 'queued') return; // already picked up or terminal
 
-  const kind = job.kind as JobKind;
+  const kind = job.kind as DurableJobKind;
   const input = parseJson<Record<string, unknown>>(job.input, {});
 
   await db.job.update({ where: { id: job.id }, data: { status: 'running', startedAt: new Date() } });
@@ -131,7 +147,9 @@ export async function runJob(jobId: string): Promise<void> {
   };
 
   try {
-    const executor = getExecutor(kind);
+    // cast: getExecutor's parameter is the frozen contracts JobKind; the
+    // lane-local 'template.analyze' member registers through the same seam
+    const executor = getExecutor(kind as JobKind);
     if (!executor) {
       throw new Error(`No executor registered for "${kind}" (Worker C lane, task 2-c). Refusing to fabricate output.`);
     }
