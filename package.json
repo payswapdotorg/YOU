@@ -1,0 +1,14 @@
+{
+  "name": "you-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "node --test tests/contract/smoke.test.mjs",
+    "lint": "node scripts/lint-placeholder.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
