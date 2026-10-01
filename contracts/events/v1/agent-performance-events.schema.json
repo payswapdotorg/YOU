@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://you.payswap.org/contracts/events/v1/agent-performance-events.schema.json",
+  "title": "YOU Agent Performance Events v1",
+  "type":"object",
+  "required":["eventId","sessionId","type","timestamp"],
+  "properties":{
+    "eventId":{"type":"string"},
+    "sessionId":{"type":"string"},
+    "type":{"enum":["listening","reading","typing","thinking","tool_use","speaking","interrupted","idle","unavailable","custom"]},
+    "timestamp":{"type":"string","format":"date-time"},
+    "durationMs":{"type":["integer","null"],"minimum":0},
+    "source":{"enum":["llm","application","user","sensor","generated"]},
+    "payload":{"type":"object"}
+  },
+  "additionalProperties":false
+}
