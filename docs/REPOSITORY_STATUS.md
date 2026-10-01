@@ -1,23 +1,22 @@
-# Repository Status — 2026-10-01
+# Repository Status — 2026-10-01 (wave 1 close)
 
 Repository: payswapdotorg/YOU
 Default branch: main
 
-## Verified live
-- Repository exists and is public.
-- main contains architecture docs, contracts, worker handoffs, runtime scaffolding and CI.
-- Sporta was re-read directly for architecture, Lab, Agent Body/Soul, provider-neutral compute, UX and promotion patterns.
-- Technology research docs were refreshed from current public sources on 2026-10-01.
-- GitHub Actions CI is configured and was triggered by the final commit.
+## Wave 1 implementation (local dev environment)
+The canonical loop runs end-to-end in the integration sandbox (Next.js 16 single-route Studio + /api/v1 route set + Prisma/SQLite + local content-addressed object store with HMAC-signed URLs + z-ai SDK provider adapters):
 
-## Current CI
-Latest run was queued at final inspection. Do not mark CI green until GitHub completes it.
+- Evidence → REAL VLM analysis → HTIR v1 persisted → immutable TwinVersion → twin-review Solution Artifact.
+- Renders: deterministic SVG adapter, provider image (75s real), provider video MP4 (5.3MB, 252s, cost labeled modeled).
+- Agent embodiment: LLM-driven turns with thinking/tool_use/speaking state events; Soul swap under an unchanged Body.
+- Lab: HUMAN-RECON-001 benchmark on seeded world 42 — generalist vs hand-designed vs searched, determinism 1.0, failure atlas, promotion drafted (never production).
+- Trust: scoped/revocable consent server-enforced on capture/reconstruct/render/embodiment (fail-closed negative tests pass); provenance chains content-hashed; audit events recorded.
 
-## Bootstrap status
-The repository is implementation-ready source-of-truth scaffolding, not a claim that the full production system has already been implemented.
+## Honest limitations
+- Dev stand-ins per DEPLOYMENT.md local environment (SQLite for Neon, local store for R2, in-process runner for Workers/queues). Free tiers remain accelerators, not dependencies.
+- F1/F8/F9 final gates open: no real-person capture yet, no formal security audit, no hosted deployment.
+- Templates/Live surfaces are roadmap states; benchmark LLM-latency components are modeled and labeled; avatar tools are declared but not executed (states only).
+- No test files in the sandbox app (environment constraint); verification is browser-driven evidence.
 
-## First TL action
-Read AGENTS.md and docs/TL_HANDOFF.md, then verify the architecture/contracts before dispatching Worker A/B/C.
-
-## Known environmental limitation
-Local network access from this session could not clone GitHub, so local command execution was not used as evidence. GitHub Actions is the authoritative remote build/test check for this bootstrap.
+## CI
+GitHub Actions runs docs/contracts checks for this repo. The implemented app lives in the integration sandbox, not in this repository yet; promotion of the implementation source into this repo is a wave-2 decision for the TL.
