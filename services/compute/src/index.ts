@@ -1,0 +1,2 @@
+export type ComputeRequest = { workload: string; minVramGb?: number; maxCostUsd?: number; privacy?: string };
+export interface ComputeProvider { capabilities(): unknown; quote(req: ComputeRequest): Promise<unknown>; submit(req: ComputeRequest): Promise<string>; status(id: string): Promise<unknown>; cancel(id: string): Promise<void>; }
