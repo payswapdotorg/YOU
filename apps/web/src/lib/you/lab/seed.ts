@@ -237,12 +237,34 @@ export async function seedLabBaseline(prisma: unknown, opts: SeedOptions = {}): 
         role: 'assistant',
         version: 1,
         capabilities: JSON.stringify(['conversation', 'product_guidance', 'capture_coaching']),
-        tools: JSON.stringify(['knowledge_search']), // declared, not executed in wave-1
-        permissions: JSON.stringify(['respond', 'emit_performance_events']),
+        // W2.C: tools declared AND executable (lab/agent-tools.ts executes
+        // these via internal service calls in avatar turns)
+        tools: JSON.stringify(['knowledge_search', 'twins.list', 'evidence.request']),
+        permissions: JSON.stringify(['respond', 'emit_performance_events', 'execute_declared_tools']),
         memory: JSON.stringify(memory),
         evaluation: JSON.stringify(evaluation),
       },
     });
+  } else {
+    // idempotent W2.C upgrade: existing wave-1 bodies declared only
+    // ['knowledge_search'] — add the executable tool surface without
+    // disturbing anything else on the row.
+    let tools: string[] = [];
+    try {
+      const existingTools = JSON.parse(body.tools ?? '[]') as unknown;
+      if (Array.isArray(existingTools)) {
+        tools = existingTools.filter((t): t is string => typeof t === 'string');
+      }
+    } catch {
+      tools = [];
+    }
+    const upgraded = [...new Set([...tools, 'knowledge_search', 'twins.list', 'evidence.request'])];
+    if (upgraded.length !== tools.length) {
+      body = await db.agentBody.update({
+        where: { id: body.id },
+        data: { tools: JSON.stringify(upgraded) },
+      });
+    }
   }
   for (const soul of SOUL_CATALOG) {
     const existing = await db.agentSoulBinding.findFirst({

@@ -4,7 +4,7 @@ node_modules/
 # next.js
 .next/
 out/
-build/
+/build/
 
 # env — never commit secrets; the example is the documented contract
 .env

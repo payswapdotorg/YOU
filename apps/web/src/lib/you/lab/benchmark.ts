@@ -8,6 +8,11 @@
 //    organization ("grounding call") so at least one honest measurement
 //    anchors every latency claim; if the provider is unavailable the score is
 //    modeled-only and the detail says so;
+//  - W2.C LATENCY HONESTY: the report payload labels EVERY LLM-latency
+//    component explicitly via `llmLatencyComponents` (basis: 'observed' |
+//    'modeled' | 'unavailable' per component) and the aggregate score basis
+//    via `latencyMsBasis`; the vlm-recon-1 stage carries its observed
+//    grounding latency in perStage as `observedLatencyMs`;
 //  - determinism is checked by re-running the pure metric computation and
 //    comparing stable JSON — real provider latencies are measurements and are
 //    deliberately EXCLUDED from the determinism check;
@@ -58,7 +63,14 @@ interface PureMetrics {
     captured: boolean;
     regionConfidence: number;
   }>;
-  perStage: Array<{ adapterId: string; role: string; modeledLatencyMs: number; modeledCostUsd: number }>;
+  perStage: Array<{
+    adapterId: string;
+    role: string;
+    modeledLatencyMs: number;
+    modeledCostUsd: number;
+    /** real grounding-call latency for vlm-recon-1 stages (labeled observed in detail); 0 for determinism re-runs */
+    observedLatencyMs?: number;
+  }>;
   thresholds: Record<string, unknown>;
 }
 
@@ -173,6 +185,9 @@ function computePureMetrics(
       role: String(stage.params.role ?? (stage.adapterId === 'vlm-recon-1' ? 'analyze' : 'stage')),
       modeledLatencyMs: ms,
       modeledCostUsd: cost,
+      ...(stage.adapterId === 'vlm-recon-1' && realGroundingLatencyMs > 0
+        ? { observedLatencyMs: realGroundingLatencyMs } // real measurement (labeled); absent during determinism re-runs
+        : {}),
     });
     latencyModeledMs += ms;
     costUsd += cost;
@@ -245,6 +260,42 @@ export async function evaluateOrganizations(
     const rerunB = computePureMetrics(world, org, 0);
     const reproducible = stableStringify(rerunA) === stableStringify(rerunB);
 
+    // W2.C latency honesty: label EVERY LLM-latency component in the report
+    // payload — modeled simulation stages vs the observed provider grounding
+    // call — so no modeled component can masquerade as a measurement.
+    const llmLatencyComponents: Array<{
+      component: string;
+      latencyMs: number | null;
+      basis: 'observed' | 'modeled' | 'unavailable';
+      note?: string;
+    }> = withReal.perStage.map((s) => ({
+      component: `${s.adapterId} (${s.role})`,
+      latencyMs: s.modeledLatencyMs,
+      basis: 'modeled',
+      note: 'deterministic seeded-world simulation estimate — not a provider measurement',
+    }));
+    if (withReal.perStage.some((s) => s.adapterId === 'vlm-recon-1')) {
+      llmLatencyComponents.push(
+        grounding.real
+          ? {
+              component: 'vlm-recon-1 analyze stage — real provider grounding call',
+              latencyMs: grounding.latencyMs,
+              basis: 'observed',
+              note: 'client wall-clock measured around the provider call (the z-ai SDK response exposes no provider-side timing field)',
+            }
+          : {
+              component: 'vlm-recon-1 analyze stage — real provider grounding call',
+              latencyMs: null,
+              basis: 'unavailable',
+              note: `provider call FAILED (${grounding.error ?? 'unknown error'}) — no measurement is claimed; the score is modeled-only`,
+            }
+      );
+    }
+
+    const latencyMsBasis = grounding.real
+      ? 'mixed: modeled per-stage latencies + ONE observed provider grounding call (measurement)'
+      : 'modeled only — the grounding call FAILED (no provider measurement claimed)';
+
     evaluations.push({
       organizationId: org.descriptor.organizationId,
       scores: {
@@ -266,9 +317,12 @@ export async function evaluateOrganizations(
         groundingCall: grounding,
         latencyRealMs: grounding.real ? grounding.latencyMs : null,
         latencyModeledMs: withReal.latencyModeledMs - realLatency,
+        latencyMsBasis,
+        latencyComponentsLabeled: llmLatencyComponents.length,
+        llmLatencyComponents,
         latencyNote: grounding.real
-          ? 'latencyMs = modeled per-stage latencies + ONE real provider grounding call (measured)'
-          : 'latencyMs is modeled-only — the real grounding call FAILED; no provider measurement is claimed',
+          ? 'latencyMs = modeled per-stage latencies + ONE real provider grounding call (measured); every component is labeled per llmLatencyComponents'
+          : 'latencyMs is modeled-only — the real grounding call FAILED; no provider measurement is claimed; every component is labeled per llmLatencyComponents',
         costUsdModeled: true,
         costNote: 'costUsd is a modeled estimate; provider pricing is not exposed to this sandbox',
         perStage: withReal.perStage,

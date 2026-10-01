@@ -37,6 +37,8 @@ model Tenant {
   usageRecords   UsageRecord[]
   agentBodies    AgentBody[]
   avatarSessions AgentAvatarSession[]
+  verificationSessions VerificationSession[]
+  templates      Template[]
 }
 
 model User {
@@ -112,6 +114,36 @@ model AuditEvent {
   entityId   String?
   payload    String   @default("{}") // JSON
   createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+// W2.A (A4) — verification sessions per docs/DATA_MODEL.md "VerificationSession"
+// and docs/SECURITY_PRIVACY.md verification semantics:
+// - active liveness challenge (control 1);
+// - ownership/verification confidence kept SEPARATE from reconstruction
+//   fidelity and from visual similarity (controls 2/3);
+// - consent-gated at creation (server-enforced, capture scope — see the
+//   compatibility note in w2a-report.md: the frozen ConsentScope union has no
+//   'verify' member, so the evidence-collection scope is reused);
+// - result NEVER claims an identity match (no identity-matching adapter exists);
+//   visualSimilarity stays null rather than fabricated.
+model VerificationSession {
+  id               String    @id @default(cuid())
+  tenantId         String
+  subjectId        String // the human whose ownership/liveness is being verified (opaque)
+  twinId           String? // optional twin this verification attests ownership of
+  purpose          String
+  method           String    @default("liveness-challenge") // SECURITY_PRIVACY control 1
+  status           String    @default("pending") // pending | in_review | evaluated | expired
+  challenge        String    @default("{}") // JSON: LivenessChallenge (nonce, prompt, requiredRegions, windows)
+  evidenceAssetIds String    @default("[]") // JSON: evidence submitted against the challenge
+  result           String? // JSON: VerificationResult (liveness | ownershipConfidence | visualSimilarity=null)
+  consentGrantId   String? // covering grant at creation (audit trail)
+  expiresAt        DateTime // session expiry (distinct from the challenge window)
+  submittedAt      DateTime?
+  evaluatedAt      DateTime?
+  createdAt        DateTime  @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 }
@@ -227,6 +259,42 @@ model Performance {
 }
 
 // ─── Plane: Render ──────────────────────────────────────────────────────────
+
+// W2.B (persistence half) — templates per docs/DATA_MODEL.md "Template" and
+// docs/API_CONTRACTS.md §Templates and scenes: POST /templates,
+// GET /templates/:id, POST /templates/:id/analyze. A template packages a
+// capture checklist, scene recipes and style presets as a versioned record
+// (Worker B's Studio surface describes exactly this shape). `analysis` holds
+// the latest template.analyze job output (capability coverage report).
+model Template {
+  id             String    @id @default(cuid())
+  tenantId       String
+  name           String
+  description    String?
+  version        Int       @default(1) // versioned record; revisions land with a later wave
+  status         String    @default("draft") // draft | published (publish transition is a later-wave route)
+  manifest       String    @default("{}") // JSON: TemplateManifest { captureChecklist, stylePresets, notes }
+  analysis       String? // JSON: TemplateAnalysis (last analyze job output)
+  analyzedAt     DateTime?
+  idempotencyKey String?   @unique // §API rules: mutating requests support Idempotency-Key
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id])
+  recipes SceneRecipe[]
+}
+
+// W2.B — scene recipes per docs/DATA_MODEL.md "SceneRecipe": scene composition
+// parameters attached to a template (camera, framing, lighting, environment).
+model SceneRecipe {
+  id         String   @id @default(cuid())
+  templateId String
+  name       String
+  parameters String   @default("{}") // JSON: scene composition parameters
+  createdAt  DateTime @default(now())
+
+  template Template @relation(fields: [templateId], references: [id])
+}
 
 model RenderJob {
   id            String   @id @default(cuid())

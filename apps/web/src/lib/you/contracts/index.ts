@@ -33,7 +33,8 @@ export type JobKind =
   | 'render.image'         // HTIR(+performance) → image artifact
   | 'render.video'         // HTIR(+performance) → video artifact
   | 'performance.fromText' // dialog text → performance tracks
-  | 'lab.benchmark';       // objective → org comparison evidence
+  | 'lab.benchmark'        // objective → org comparison evidence
+  | 'template.analyze';    // template manifest → coverage analysis (W2.B, landed 2026-10-01 per w2a-report compat note 2)
 
 export interface JobStep {
   key: string;

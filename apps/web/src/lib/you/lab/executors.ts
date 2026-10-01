@@ -39,6 +39,7 @@ import { emitEvent, recordLlmCalls, recordUsage } from './events';
 import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations } from './benchmark';
+import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, type ComputeQuote, type ComputeSubmission } from './compute';
 import { recordRegionFailures } from './failure-atlas';
 import { hashString, makeRng } from './determinism';
 
@@ -151,6 +152,88 @@ async function loadPipelineByName(name: string) {
     );
   }
   return p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// W2.C compute-broker bookkeeping (work item C3)
+// The three broker-routed workloads (render.image, render.video, twin.compile)
+// record quote/latency/cost fields in the durable job records:
+// - the QUOTE comes from submit-time (broker-submitted jobs carry it embedded
+//   in Job.input.__compute) or is quoted at execution start through the
+//   broker (route-submitted jobs — the API routes call core createJob
+//   directly; phase labeled honestly either way);
+// - OBSERVED latency/cost come from the real execution (measured, or
+//   explicitly labeled not-observable when the provider hides pricing);
+// - every cost carries its basis; nothing modeled masquerades as observed.
+// The quote summary also lands in the step detail (durable even on failure).
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface ExecutorComputeRecord {
+  broker: 'compute-broker/w2c';
+  providerId: string;
+  routedVia: string;
+  quotePhase: string;
+  quote: ComputeQuote | null;
+  quoteError?: string;
+  observed: {
+    latencyMs: number | null;
+    costUsd: number | null;
+    costBasis: string;
+    note: string;
+  };
+}
+
+async function executionComputeQuote(
+  kind: 'render.image' | 'render.video' | 'twin.compile',
+  ctx: JobContext,
+  input: Record<string, unknown>,
+  adapter?: string
+): Promise<{ quote: ComputeQuote | null; phase: string; error?: string }> {
+  const embedded = input.__compute as { quote?: ComputeQuote; quotePhase?: string } | undefined;
+  if (embedded && embedded.quote) {
+    return { quote: embedded.quote, phase: embedded.quotePhase ?? 'submit-time' };
+  }
+  try {
+    // tenantId/adapter are the extended ComputeSubmission fields (the frozen
+    // ComputeRequest shape stays untouched — they drive observed-history lookups)
+    const request = {
+      workload: kind,
+      tenantId: ctx.tenantId,
+      ...(adapter ? { adapter } : {}),
+    } as ComputeSubmission;
+    const quote = await quoteCompute(request);
+    return {
+      quote,
+      phase:
+        'execution-start (job was submitted via core createJob by the API route; broker-integrated submission is available via submitCompute)',
+    };
+  } catch (e) {
+    return {
+      quote: null,
+      phase: 'execution-start',
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+function computeRecord(
+  quoteResult: { quote: ComputeQuote | null; phase: string; error?: string },
+  observed: ExecutorComputeRecord['observed']
+): ExecutorComputeRecord {
+  return {
+    broker: 'compute-broker/w2c',
+    providerId: LOCAL_EXECUTOR_PROVIDER_ID,
+    routedVia: 'in-process executor via the durable job runner (local-executor provider)',
+    quotePhase: quoteResult.phase,
+    quote: quoteResult.quote,
+    ...(quoteResult.error ? { quoteError: quoteResult.error } : {}),
+    observed,
+  };
+}
+
+function quoteSummary(quote: ComputeQuote | null, phase: string): string {
+  if (!quote) return `broker quote unavailable (phase ${phase})`;
+  return `local-executor · cost $${quote.cost.usd} (${quote.cost.basis}) · latency p50 ${quote.latency.p50EstimateMs}ms (${quote.latency.basis}${quote.latency.observedRuns ? `, n=${quote.latency.observedRuns}` : ''}) · quoted ${phase}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -376,7 +459,11 @@ registerExecutor({
     steps.done('evidence', `${assets.length} assets`);
     await ctx.report({ steps: steps.all(), progress: 0.22 });
 
-    await ctx.report({ steps: steps.running('analyze', `${assets.length} assets`), progress: 0.25 });
+    // W2.C compute-broker bookkeeping: quote for the routed workload (durable
+    // in the job record; step detail carries the summary even on failure).
+    const computeQuote = await executionComputeQuote('twin.compile', ctx, input);
+    steps.running('analyze', `${assets.length} assets — ${quoteSummary(computeQuote.quote, computeQuote.phase)}`);
+    await ctx.report({ steps: steps.all(), progress: 0.25 });
     const vlmAssets: VlmReconAssetInput[] = assets.map((a) => ({
       id: a.id,
       storageKey: a.storageKey,
@@ -531,6 +618,12 @@ registerExecutor({
         solutionArtifactId: solution.id,
         deficienciesCount: analysis.htirDraft.confidence.deficiencies.length,
         usage: analysis.usage,
+        compute: computeRecord(computeQuote, {
+          latencyMs: analysis.usage.totalLatencyMs, // real measured VLM total (sum of per-call latencies)
+          costUsd: null,
+          costBasis: 'not-observable (provider pricing not exposed)',
+          note: `modeled estimate: $0.01 × ${analysis.usage.llmCalls} real llmCalls = $${(0.01 * analysis.usage.llmCalls).toFixed(2)} (labeled modeled; see benchmark MODELED_STAGE_COST)`,
+        }),
       },
       entities: [
         { type: 'twin', id: twin.id },
@@ -642,10 +735,18 @@ registerExecutor({
     await ctx.report({ steps: steps.all(), progress: 0.2 });
 
     await ctx.report({ steps: steps.running('render', adapter), progress: 0.25 });
+    // W2.C compute-broker bookkeeping: adapter-aware quote (svg-portrait-1 is
+    // zero-deterministic + local-only; ai-image-1 is modeled-cost provider egress).
+    const computeQuote = await executionComputeQuote('render.image', ctx, input, adapter);
+    await ctx.report({
+      steps: steps.running('render', `${adapter} — ${quoteSummary(computeQuote.quote, computeQuote.phase)}`),
+      progress: 0.28,
+    });
     let artifactId: string;
     let representationKind: string;
     let latencyMs: number;
     let costUsd: number | null;
+    let computeObserved: ExecutorComputeRecord['observed'];
     if (adapter === 'svg-portrait-1') {
       const t0 = Date.now();
       const svg = renderPortraitSvg(htir, { style, seed: 42 });
@@ -674,6 +775,12 @@ registerExecutor({
       artifactId = artifact.id;
       representationKind = 'portrait-svg';
       costUsd = 0; // deterministic renderer — genuinely zero marginal cost
+      computeObserved = {
+        latencyMs,
+        costUsd: 0,
+        costBasis: 'zero-deterministic',
+        note: 'deterministic local renderer — no provider involved; measured in-process latency, zero marginal cost is an observable fact',
+      };
     } else {
       const result = await renderPortraitImage(htir, style);
       latencyMs = result.latencyMs;
@@ -691,6 +798,12 @@ registerExecutor({
       artifactId = artifact.id;
       representationKind = 'portrait-image';
       costUsd = null; // provider cost not observable — modeled estimate lives in artifact meta
+      computeObserved = {
+        latencyMs,
+        costUsd: null,
+        costBasis: 'not-observable (provider pricing not exposed)',
+        note: 'modeled estimate $0.04 lives in the artifact meta (costUsdModeled: true) — never recorded as observed cost',
+      };
       await recordUsage(ctx.tenantId, 'provider.image.calls', 1, {
         jobKind: 'render.image',
         renderJobId: job.id,
@@ -770,7 +883,7 @@ registerExecutor({
     await recordUsage(ctx.tenantId, 'job.render.image', 1, { renderJobId: job.id, adapterId: adapter });
 
     return {
-      output: { artifactId, solutionArtifactId: solutionId, adapterId: adapter, latencyMs, costUsd },
+      output: { artifactId, solutionArtifactId: solutionId, adapterId: adapter, latencyMs, costUsd, compute: computeRecord(computeQuote, computeObserved) },
       entities: [
         { type: 'renderJob', id: job.id },
         { type: 'outputArtifact', id: artifactId },
@@ -880,6 +993,13 @@ registerExecutor({
     await ctx.report({ steps: steps.all(), progress: 0.2 });
 
     await ctx.report({ steps: steps.running('video', 'provider task + bounded poll (≤10 min)'), progress: 0.25 });
+    // W2.C compute-broker bookkeeping: quote for the routed workload
+    // (ai-video-1 provider egress; latency from observed history when present).
+    const computeQuote = await executionComputeQuote('render.video', ctx, input, AI_VIDEO_ADAPTER.adapterId);
+    await ctx.report({
+      steps: steps.running('video', `provider task + bounded poll (≤10 min) — ${quoteSummary(computeQuote.quote, computeQuote.phase)}`),
+      progress: 0.28,
+    });
     let result;
     try {
       result = await renderPortraitVideo({ htir, style, baseImage });
@@ -1070,6 +1190,12 @@ registerExecutor({
         latencyMs: result.latencyMs,
         videoStored: artifactKind === 'video',
         remoteUrl: result.remoteUrl,
+        compute: computeRecord(computeQuote, {
+          latencyMs: result.latencyMs, // real measured total (create + poll + download)
+          costUsd: null,
+          costBasis: 'not-observable (provider pricing not exposed)',
+          note: `modeled estimate $0.1 lives in the artifact meta (costUsdModeled: true); provider waited ${result.waitedMs}ms is measured — never recorded as observed cost`,
+        }),
       },
       entities: [
         { type: 'renderJob', id: job.id },
@@ -1321,6 +1447,23 @@ registerExecutor({
         simulated: true,
         simulationNote:
           'Lab benchmark results are SIMULATED research truth (deterministic seeded simulation + explicitly-labeled real provider grounding measurements); never production human truth',
+        // W2.C latency honesty at the run-report level: the aggregate score
+        // basis per organization + the per-component labeling rule. Full
+        // per-component labels (modeled | observed | unavailable) live in each
+        // EvaluationReport detail (llmLatencyComponents).
+        latencyHonesty: {
+          rule: 'every LLM-latency component is labeled per-component in each EvaluationReport detail (llmLatencyComponents: modeled | observed | unavailable); aggregate latencyMs bases:',
+          perOrganization: evaluations.map((e) => {
+            const d = e.detail as Record<string, unknown>;
+            return {
+              organizationId: e.organizationId,
+              latencyMsBasis: d.latencyMsBasis ?? null,
+              latencyModeledMs: d.latencyModeledMs ?? null,
+              latencyRealMs: d.latencyRealMs ?? null,
+              latencyComponentsLabeled: d.latencyComponentsLabeled ?? null,
+            };
+          }),
+        },
         aggregate,
         perOrganization: evaluations.map((e) => ({
           organizationId: e.organizationId,
