@@ -4,6 +4,8 @@ Legend: [ ] pending [>] active/partial [x] verified (in the local dev environmen
 
 Wave 1 was implemented in the integration sandbox (Next.js 16 + Prisma/SQLite local stand-ins per docs/DEPLOYMENT.md "local: deterministic fixtures" — R2→local content-addressed object store with signed URLs, Neon→SQLite, provider compute→z-ai SDK adapters). Nothing here claims production deployment.
 
+Wave 2 note (2026-10-01): the wave-1 implementation source was promoted into this repository at `apps/web` (TL wave-2 decision, branch `wave-2/promote-studio`). Subsequent lanes implement against the repo; the integration sandbox remains the live verification station.
+
 ## G0 — Tech Lead
 [x] G0.1 architecture/contracts audit
 [x] G0.2 freeze shared schemas (in-app contracts lib mirroring contracts/{htir,events,lab}/v1)
@@ -60,3 +62,9 @@ Wave 1 was implemented in the integration sandbox (Next.js 16 + Prisma/SQLite lo
 [>] F8 provenance/consent/security audit (enforcement + negative tests verified; formal audit pending)
 [ ] F9 fresh-browser hosted deployment (Vercel/Workers/Neon topology not yet deployed; sandbox preview browser-verified)
 [ ] F10 TL sign-off (wave 1 accepted as local-environment complete; final acceptance pending F1/F8/F9)
+
+## Wave 2 — repo promotion + open gates
+[x] W2.0 implementation source promoted into apps/web (TL; branch wave-2/promote-studio)
+[ ] W2.A verification-session APIs (A4) + packages/sdk-js update (A8) + integration tests (A10) — Worker A lane
+[ ] W2.B Stage-3 templates: API routes POST /templates, GET /templates/:id, POST /templates/:id/analyze (Worker A persistence lane) + Studio templates surface (Worker B UX lane) — frozen contract: docs/API_CONTRACTS.md "Templates and scenes"
+[ ] W2.C Compute Broker quote/submit/status/cancel surface (C3), agent tool execution in avatar sessions, benchmark latency honesty — Worker C lane

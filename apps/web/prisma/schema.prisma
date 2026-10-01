@@ -1,0 +1,573 @@
+// YOU — Human Reality Infrastructure
+// Prisma schema (local dev: SQLite stand-in for Neon PostgreSQL per docs/DEPLOYMENT.md)
+// JSON-encoded sub-structures are stored as String (SQLite has no list types).
+// Contract authority: docs/DATA_MODEL.md + docs/adr/* in payswapdotorg/YOU.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Plane: Control ─────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  users          User[]
+  applications   Application[]
+  apiKeys        ApiKey[]
+  twins          Twin[]
+  captureSessions CaptureSession[]
+  performances   Performance[]
+  renderJobs     RenderJob[]
+  jobs           Job[]
+  events         EventRecord[]
+  webhooks       WebhookEndpoint[]
+  consentGrants  ConsentGrant[]
+  auditEvents    AuditEvent[]
+  artifacts      OutputArtifact[]
+  solutions      SolutionArtifact[]
+  usageRecords   UsageRecord[]
+  agentBodies    AgentBody[]
+  avatarSessions AgentAvatarSession[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String   @unique
+  name      String
+  role      String   @default("owner")
+  createdAt DateTime @default(now())
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  sessions Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Application {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  tenantId    String
+  name        String
+  prefix      String
+  hash        String    @unique
+  scopes      String    @default("[]") // JSON string[]
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+// ─── Plane: Trust ───────────────────────────────────────────────────────────
+
+model ConsentGrant {
+  id         String    @id @default(cuid())
+  tenantId   String
+  subjectId  String // the human's opaque subject id
+  granteeId  String // tenant/app/actor receiving permission
+  purpose    String
+  scopes     String    @default("[]") // JSON: e.g. ["capture","reconstruct","render","embodiment"]
+  operations String    @default("[]") // JSON: allowed operations
+  outputs    String    @default("[]") // JSON: allowed output classes (derived only by default)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  tenantId   String
+  actorType  String // user | application | system | job
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  payload    String   @default("{}") // JSON
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+// ─── Plane: Evidence ────────────────────────────────────────────────────────
+
+model CaptureSession {
+  id           String    @id @default(cuid())
+  tenantId     String
+  twinId       String
+  status       String    @default("pending") // pending | uploading | analyzing | complete | failed
+  checklist    String    @default("[]") // JSON: [{ item, capability, status, instructions }]
+  instructions String? // capture-scientist guidance for this session
+  error        String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id])
+  twin    Twin            @relation(fields: [twinId], references: [id])
+  assets  EvidenceAsset[]
+  request EvidenceRequest[]
+}
+
+model EvidenceAsset {
+  id               String   @id @default(cuid())
+  tenantId         String
+  captureSessionId String
+  kind             String // image | video | audio
+  storageKey       String // content-addressed object store key (indexed, not unique: same bytes may back multiple logical records)
+  contentHash      String // sha256
+  bytes            Int
+  mime             String
+  regions          String   @default("[]") // JSON: captured regions/purposes
+  quality          String?  // JSON: analysis result (blur, lighting, coverage…)
+  createdAt        DateTime @default(now())
+
+  captureSession CaptureSession @relation(fields: [captureSessionId], references: [id])
+
+  @@index([storageKey])
+}
+
+// ─── Plane: Twin ────────────────────────────────────────────────────────────
+
+model Twin {
+  id             String   @id @default(cuid())
+  tenantId       String
+  displayName    String
+  personName     String?
+  subjectId      String // links to consent subject
+  status         String   @default("draft") // draft | capturing | reconstructed | ready
+  currentVersion Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  versions        TwinVersion[]
+  captureSessions CaptureSession[]
+  performances    Performance[]
+  renderJobs      RenderJob[]
+  avatarSessions  AgentAvatarSession[]
+}
+
+model TwinVersion {
+  id                String   @id @default(cuid())
+  twinId            String
+  version           Int
+  status            String   @default("draft") // draft | published (immutable once published)
+  htir              String // JSON: HTIR v1 document (canonical)
+  inputVersionIds   String   @default("[]") // JSON: prior versions used as input
+  pipelineId        String? // PipelineCandidate id
+  evidenceAssetIds  String   @default("[]") // JSON: evidence inputs (content-hashed)
+  confidenceSummary String?  // JSON: { overall, byDomain, deficiencies }
+  createdAt         DateTime @default(now())
+
+  twin            Twin             @relation(fields: [twinId], references: [id])
+  representations  Representation[]
+  renderJobs      RenderJob[]
+  solutions        SolutionArtifact[]
+  feedbacks        FeedbackRequest[]
+  evidenceRequests EvidenceRequest[]
+
+  @@unique([twinId, version])
+}
+
+model Representation {
+  id            String   @id @default(cuid())
+  twinVersionId String
+  kind          String // htir-summary | portrait-svg | portrait-image | video | neural | mesh
+  adapterId     String // technology/adapter that produced it
+  artifactId    String? // OutputArtifact reference
+  params        String   @default("{}") // JSON
+  createdAt     DateTime @default(now())
+
+  twinVersion TwinVersion @relation(fields: [twinVersionId], references: [id])
+}
+
+// ─── Plane: Performance ─────────────────────────────────────────────────────
+
+model Performance {
+  id         String   @id @default(cuid())
+  tenantId   String
+  twinId     String?
+  name       String
+  origin     String // text | audio | video | motion | generated | interaction
+  durationMs Int?
+  tracks     String   @default("[]") // JSON: PerformanceTrack[] (state/expression/speech timelines)
+  script     String? // dialog source text when origin=text
+  createdAt  DateTime @default(now())
+
+  tenant    Tenant      @relation(fields: [tenantId], references: [id])
+  twin      Twin?       @relation(fields: [twinId], references: [id])
+  renderJobs RenderJob[]
+}
+
+// ─── Plane: Render ──────────────────────────────────────────────────────────
+
+model RenderJob {
+  id            String   @id @default(cuid())
+  tenantId      String
+  twinId        String
+  twinVersionId String
+  performanceId String?
+  kind          String // image | video
+  style         String   @default("photorealistic")
+  adapterId     String?
+  status        String   @default("queued") // queued | running | succeeded | failed
+  artifactId    String?
+  costUsd       Float?
+  latencyMs     Int?
+  error         String?
+  createdAt     DateTime @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  twin        Twin         @relation(fields: [twinId], references: [id])
+  twinVersion TwinVersion  @relation(fields: [twinVersionId], references: [id])
+  performance Performance? @relation(fields: [performanceId], references: [id])
+  solutions   SolutionArtifact[]
+}
+
+model OutputArtifact {
+  id          String   @id @default(cuid())
+  tenantId    String
+  kind        String // image | video | svg | htir | report | manifest
+  storageKey  String // local object store (R2-shaped adapter); indexed, not unique (deterministic adapters may emit identical bytes)
+  remoteUrl   String? // provider-hosted reference when bytes not re-hosted
+  contentHash String
+  bytes       Int
+  mime        String
+  meta        String   @default("{}") // JSON (provenance, adapter, params)
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([storageKey])
+}
+
+// ─── Solution Artifacts / feedback loop ─────────────────────────────────────
+
+model SolutionArtifact {
+  id            String   @id @default(cuid())
+  tenantId      String
+  title         String
+  type          String // twin-review | render-review | benchmark-report | avatar-session
+  manifest      String // JSON: manifest per docs/SOLUTION_ARTIFACT.md
+  twinVersionId String?
+  renderJobId   String?
+  createdAt     DateTime @default(now())
+
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  twinVersion TwinVersion?  @relation(fields: [twinVersionId], references: [id])
+  renderJob   RenderJob?    @relation(fields: [renderJobId], references: [id])
+  feedbacks   FeedbackRequest[]
+}
+
+model FeedbackRequest {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  solutionArtifactId String?
+  twinVersionId      String
+  region             String? // e.g. face.hairline, hands, silhouette
+  frame              String?
+  verdict            String // correct | incorrect | uncertain | missing-detail | wrong-motion | wrong-identity | wrong-style
+  note               String?
+  status             String   @default("open") // open | addressed
+  createdAt          DateTime @default(now())
+
+  solutionArtifact SolutionArtifact? @relation(fields: [solutionArtifactId], references: [id])
+  twinVersion      TwinVersion      @relation(fields: [twinVersionId], references: [id])
+}
+
+model EvidenceRequest {
+  id               String   @id @default(cuid())
+  tenantId         String
+  twinVersionId    String?
+  captureSessionId String? // prefilled capture session once fulfilled
+  reason           String
+  capability       String // face | hair | hands | silhouette | motion | speech | teeth …
+  instructions     String
+  expectedSignal   String
+  scope            String // privacy/consent scope statement
+  status           String   @default("open") // open | fulfilled | expired
+  createdAt        DateTime @default(now())
+
+  captureSession CaptureSession? @relation(fields: [captureSessionId], references: [id])
+  twinVersion    TwinVersion?    @relation(fields: [twinVersionId], references: [id])
+}
+
+// ─── Jobs / events / webhooks (durable async truth, ADR-0005) ──────────────
+
+model Job {
+  id             String    @id @default(cuid())
+  tenantId       String
+  kind           String // capture.quality | twin.compile | render.image | render.video | performance.fromText | lab.benchmark
+  status         String    @default("queued") // queued|provisioning|running|collecting|succeeded|failed|cancelled|unavailable
+  input          String    @default("{}") // JSON
+  output         String? // JSON
+  progress       Float     @default(0)
+  steps          String    @default("[]") // JSON: [{ key, label, status }]
+  error          String?
+  idempotencyKey String?   @unique
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+model EventRecord {
+  id         String   @id @default(cuid())
+  tenantId   String
+  type       String // twin.created | capture.completed | job.succeeded | render.succeeded | consent.granted …
+  entityType String
+  entityId   String?
+  payload    String   @default("{}") // JSON
+  createdAt  DateTime @default(now())
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
+  deliveries  WebhookDelivery[]
+}
+
+model WebhookEndpoint {
+  id        String   @id @default(cuid())
+  tenantId  String
+  url       String
+  secret    String
+  events    String   @default("[]") // JSON: subscribed event types
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id])
+  deliveries WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  endpointId String
+  eventId    String
+  status     String   @default("pending") // pending | delivered | failed | skipped
+  attempts   Int      @default(0)
+  lastError  String?
+  createdAt  DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  event    EventRecord     @relation(fields: [eventId], references: [id])
+}
+
+// ─── Plane: Technology / Lab ────────────────────────────────────────────────
+
+model TechnologyCandidate {
+  id             String  @id @default(cuid())
+  techId         String  @unique // e.g. "sam2", "smpl-x", "vlm-recon"
+  name           String
+  family         String // segmentation | body-recon | face | render | llm | …
+  vendor         String?
+  source         String // open | closed | fixture
+  licenseCode    String // code license
+  licenseWeights String // model-weight license
+  licenseData    String // dataset license
+  providerTerms  String
+  runtime        String // requirements
+  patentNotes    String   @default("")
+  status         String // research | candidate | validated | production | retired | closed-characterized
+  meta           String   @default("{}") // JSON: notes, links
+
+  versions TechnologyVersion[]
+}
+
+model TechnologyVersion {
+  id               String   @id @default(cuid())
+  candidateId      String
+  version          String
+  adapterVersion   String
+  capabilities     String   @default("[]") // JSON
+  inputContract    String   @default("{}")
+  outputContract   String   @default("{}")
+  resources        String   @default("{}") // JSON: vram, cpu…
+  latencyP50Ms     Int?
+  costUsdPerUnit   Float?
+  failureClasses   String   @default("[]") // JSON
+  benchmarkProfile String   @default("{}") // JSON
+  provenance       String   @default("{}") // JSON
+  createdAt        DateTime @default(now())
+
+  candidate TechnologyCandidate @relation(fields: [candidateId], references: [id])
+}
+
+model LabObjective {
+  id          String   @id @default(cuid())
+  code        String   @unique // HUMAN-RECON-001
+  title       String
+  description String
+  target      String   @default("{}") // JSON: goal spec
+  gates       String   @default("{}") // JSON: promotion gates
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+}
+
+model PipelineCandidate {
+  id         String   @id @default(cuid())
+  name       String
+  genome     String // JSON: PipelineGenome
+  generation Int      @default(0)
+  parentId   String?
+  origin     String // generalist | hand-designed | searched
+  status     String   @default("draft") // draft | benchmarked | validated | canary | production | retired
+  createdAt  DateTime @default(now())
+}
+
+model BenchmarkRun {
+  id           String    @id @default(cuid())
+  objectiveId  String
+  worldSeed    Int
+  status       String    @default("queued")
+  organizations String   @default("[]") // JSON: org descriptors
+  metrics      String? // JSON: aggregate comparison
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  reports   EvaluationReport[]
+  failures  FailureCase[]
+}
+
+model EvaluationReport {
+  id             String   @id @default(cuid())
+  benchmarkRunId String
+  organizationId String
+  scores         String   @default("{}") // JSON: metric → value
+  reproducible   Boolean  @default(false)
+  seed           Int
+  detail         String   @default("{}") // JSON: per-stage evidence
+  createdAt      DateTime @default(now())
+
+  benchmarkRun BenchmarkRun @relation(fields: [benchmarkRunId], references: [id])
+}
+
+model FailureCase {
+  id                 String   @id @default(cuid())
+  benchmarkRunId     String?
+  organizationId     String?
+  inputConditions    String   @default("{}") // JSON
+  pipeline           String   @default("{}") // JSON
+  technologyVersions String   @default("[]") // JSON
+  artifacts          String   @default("[]") // JSON refs
+  suspectedCause     String
+  confidence         Float    @default(0.5)
+  remediation        String?
+  createdAt          DateTime @default(now())
+
+  benchmarkRun BenchmarkRun? @relation(fields: [benchmarkRunId], references: [id])
+}
+
+model PromotionRecord {
+  id          String   @id @default(cuid())
+  pipelineId  String
+  fromStatus  String
+  toStatus    String
+  decision    String // promoted | rejected | reverted | drafted
+  evidence    String   @default("{}") // JSON: benchmark refs, rights/privacy refs
+  decidedBy   String   @default("tl")
+  createdAt   DateTime @default(now())
+}
+
+// ─── Plane: Agent embodiment ────────────────────────────────────────────────
+
+model AgentBody {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  role        String
+  version     Int      @default(1)
+  capabilities String  @default("[]") // JSON
+  tools       String   @default("[]") // JSON
+  permissions String   @default("[]") // JSON
+  memory      String   @default("{}") // JSON: memory policy + working notes
+  evaluation  String   @default("{}") // JSON: evaluator spec
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant              @relation(fields: [tenantId], references: [id])
+  possessions AgentSoulBinding[]
+  sessions  AgentAvatarSession[]
+}
+
+model AgentSoulBinding {
+  id           String   @id @default(cuid())
+  bodyId       String
+  soulKey      String // catalog key e.g. "soul-one-fast"
+  provider     String // zai | openai | … (adapter)
+  model        String
+  routingClass String // system_one | system_two
+  params       String   @default("{}") // JSON: thinking, temperature…
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  body AgentBody @relation(fields: [bodyId], references: [id])
+}
+
+model AgentAvatarSession {
+  id        String    @id @default(cuid())
+  tenantId  String
+  bodyId    String
+  soulKey   String
+  twinId    String?
+  status    String    @default("live") // live | ended
+  createdAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id])
+  body   AgentBody         @relation(fields: [bodyId], references: [id])
+  twin   Twin?             @relation(fields: [twinId], references: [id])
+  turns  AgentAvatarTurn[]
+}
+
+model AgentAvatarTurn {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String // user | agent
+  content   String
+  states    String   @default("[]") // JSON: AgentPerformanceEvent[] emitted for this turn
+  latencyMs Int?
+  createdAt DateTime @default(now())
+
+  session AgentAvatarSession @relation(fields: [sessionId], references: [id])
+}
+
+// ─── Usage metering ─────────────────────────────────────────────────────────
+
+model UsageRecord {
+  id        String   @id @default(cuid())
+  tenantId  String
+  metric    String // evidence.bytes | job.reconstruction | job.render.image | llm.tokens …
+  quantity  Float
+  meta      String   @default("{}") // JSON
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}

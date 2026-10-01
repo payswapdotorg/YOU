@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+build/
+
+# env — never commit secrets; the example is the documented contract
+.env
+.env.*
+!.env.example
+
+# runtime state (SQLite stand-in + local object store)
+apps/web/db/
+
+# logs
+*.log
+
+# misc
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
