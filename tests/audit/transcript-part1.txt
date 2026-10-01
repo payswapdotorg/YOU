@@ -1,0 +1,289 @@
+W3.C F8 AUDIT BATTERY — PART 1 — base http://localhost:3230 — 2026-10-01T18:45:32Z
+════════ [W3C-001] Studio SPA page renders at / ══════════
+CMD: curl http://localhost:3230/
+STATUS: 200 (expected: 200)
+CONTENT-TYPE: text/html;
+BODY:
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/_next/static/chunks/apps_web_src_app_globals_1wvyn-h.css" data-precedence="next_static/chunks/apps_web_src_app_globals_1wvyn-h.css"/><link re
+[…html truncated, 40787 bytes]
+VERDICT: PASS 
+
+════════ [W3C-002] GET /session without cookie → unauthenticated envelope ══════════
+CMD: curl http://localhost:3230/api/v1/session
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"no active session — POST /api/v1/session to create one"}}
+VERDICT: PASS 
+
+════════ [W3C-003] POST /session — bootstrap demo tenant (cookie A) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/session -c /tmp/w3c-cookiesA.txt -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"user":{"id":"cmupvwstd0002lrb475l9xg17","email":"founder@you.dev","name":"Studio Founder","role":"owner"},"tenant":{"id":"cmupvwst50000lrb43md58ru4","name":"YOU Demo Studio","slug":"demo"}}
+VERDICT: PASS 
+
+════════ [W3C-004] POST /twins — create twin A (tenant A) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"displayName\":\"W3C\ Audit\ Twin\ A\"\,\"personName\":\"Audit\ Subject\ A\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwt4y003blrb4qri7fu3v","displayName":"W3C Audit Twin A","personName":"Audit Subject A","subjectId":"subj_259bf95989df7e7179c3514e","status":"draft","currentVersion":0,"createdAt":"2026-10-01T18:45:33.442Z","updatedAt":"2026-10-01T18:45:33.442Z"}
+VERDICT: PASS 
+
+════════ [W3C-005] POST /twins/:id/capture-sessions — open capture session A ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/capture-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwtsb003hlrb4erd44rea","twinId":"cmupvwt4y003blrb4qri7fu3v","status":"pending","checklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","status":"pending","expectedSignal":"frontal landmarks, facial proportions, skin detail"},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","status":"pending","expectedSignal":"profile geometry, nose/jaw depth cues"},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","status":"pending","expectedSignal":"body proportions, shoulder/hip ratios"},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","status":"pending","expectedSignal":"hand geometry, finger articulation range"},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","status":"pending","expectedSignal":"hair coverage, hairline geometry"},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","status":"pending","expectedSignal":"viseme/voice profile, mouth articulation"}],"instructions":"Complete the checklist below. Even, front-facing light and a plain background give the strongest signal.","error":null,"createdAt":"2026-10-01T18:45:34.283Z","completedAt":null,"assets":[]}
+VERDICT: PASS 
+
+════════ [W3C-006] CONSENT FAIL-CLOSED: evidence upload WITHOUT grant → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.front\"\]
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"capture\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"capture","requiredScopes":["capture"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-006]: PASS — error.code == consent_required
+════════ [W3C-007] POST /consent-grants — grant capture scope, subject A, ttl 2h ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_259bf95989df7e7179c3514e\"\,\"purpose\":\"w3c\ audit\ battery\"\,\"scopes\":\[\"capture\"\]\,\"ttlHours\":2\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwuqu003llrb4xk6cslbu","subjectId":"subj_259bf95989df7e7179c3514e","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery","scopes":["capture"],"operations":["capture"],"outputs":["derived"],"expiresAt":"2026-10-01T20:45:35.525Z","revokedAt":null,"createdAt":"2026-10-01T18:45:35.526Z"}
+VERDICT: PASS 
+
+════════ [W3C-008] evidence upload WITH grant → accepted ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.front\"\]
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwuto003rlrb4oe5oj5ah","kind":"image","regions":["face.front"],"contentHash":"497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581","bytes":70,"mime":"image/png","quality":null,"createdAt":"2026-10-01T18:45:35.629Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-008]: PASS — asset view exposes no storageKey (derived-output hygiene)
+── db-probe: expire grant A (simulated TTL lapse) ──
+{"id":"cmupvwuqu003llrb4xk6cslbu","expiresAt":"2026-10-01T17:45:35.817Z","revokedAt":null}
+
+════════ [W3C-010] CONSENT TTL FAIL-CLOSED: upload after grant expiry → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.front\"\]
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"capture\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"capture","requiredScopes":["capture"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-010]: PASS — error.code == consent_required
+── db-probe: restore grant A (+2h) → {"id":"cmupvwuqu003llrb4xk6cslbu","expiresAt":"2026-10-01T20:45:35.992Z","revokedAt":null} ──
+
+════════ [W3C-012] upload after grant renewal → accepted (fail-open only via active grant) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.hairline\"\]
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwv52003zlrb45c5fihyr","kind":"image","regions":["face.hairline"],"contentHash":"497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581","bytes":70,"mime":"image/png","quality":null,"createdAt":"2026-10-01T18:45:36.039Z"}
+VERDICT: PASS 
+
+════════ [W3C-013] DELETE /consent-grants/:id — revoke grant A (revokedAt set, row kept) ══════════
+CMD: curl -X DELETE http://localhost:3230/api/v1/consent-grants/cmupvwuqu003llrb4xk6cslbu -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwuqu003llrb4xk6cslbu","subjectId":"subj_259bf95989df7e7179c3514e","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery","scopes":["capture"],"operations":["capture"],"outputs":["derived"],"expiresAt":"2026-10-01T20:45:35.992Z","revokedAt":"2026-10-01T18:45:37.199Z","createdAt":"2026-10-01T18:45:35.526Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-013]: PASS — view shows revokedAt non-null
+════════ [W3C-014] CONSENT REVOCATION FAIL-CLOSED: upload after revoke → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.front\"\]
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"capture\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"capture","requiredScopes":["capture"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-014]: PASS — error.code == consent_required
+════════ [W3C-015] CONSENT FAIL-CLOSED: verification-session create WITHOUT grant (subject B) → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_w3c_audit_subject_b\"\,\"purpose\":\"w3c\ audit\ battery\ —\ liveness\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"capture\" for subject subj_w3c_audit_subject_b — grant or renew consent first","details":{"subjectId":"subj_w3c_audit_subject_b","scope":"capture","requiredScopes":["capture"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-015]: PASS — error.code == consent_required
+════════ [W3C-016] POST /consent-grants — grant capture scope, subject B, ttl 1h ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_w3c_audit_subject_b\"\,\"purpose\":\"w3c\ audit\ battery\ —\ verification\"\,\"scopes\":\[\"capture\"\]\,\"ttlHours\":1\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwwdj004blrb4110053ys","subjectId":"subj_w3c_audit_subject_b","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery — verification","scopes":["capture"],"operations":["capture"],"outputs":["derived"],"expiresAt":"2026-10-01T19:45:37.639Z","revokedAt":null,"createdAt":"2026-10-01T18:45:37.640Z"}
+VERDICT: PASS 
+
+════════ [W3C-017] verification-session create WITH grant → 201 (challenge issued) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_w3c_audit_subject_b\"\,\"purpose\":\"w3c\ audit\ battery\ —\ liveness\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwweh004hlrb4w2tn3bv0","subjectId":"subj_w3c_audit_subject_b","twinId":null,"purpose":"w3c audit battery — liveness","method":"liveness-challenge","status":"pending","challenge":{"challengeId":"vc_f5c07ed0de1c5c6f","nonce":"271b54bb66d7cd1972146c6c","variant":"hairline-reveal","prompt":"Face the camera and sweep your hair back briefly so your forehead and hairline are fully visible.","instructions":"Take a front photo with the hairline fully visible before releasing the hair.","requiredRegions":["face.front","face.hairline"],"issuedAt":"2026-10-01T18:45:37.672Z","expiresAt":"2026-10-01T18:55:37.672Z","consumedAt":null},"evidenceAssetIds":[],"result":null,"consentGrantId":"cmupvwwdj004blrb4110053ys","expiresAt":"2026-10-01T19:45:37.672Z","createdAt":"2026-10-01T18:45:37.673Z","submittedAt":null,"evaluatedAt":null}
+VERDICT: PASS 
+
+EXTRA [W3C-017]: PASS — session view has pending status + consentGrantId
+── db-probe: expire grant B → {"id":"cmupvwwdj004blrb4110053ys","expiresAt":"2026-10-01T17:45:37.817Z","revokedAt":null} ──
+
+════════ [W3C-019] verification-session create after grant TTL expiry → consent_required (fail-closed re-armed) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_w3c_audit_subject_b\"\,\"purpose\":\"w3c\ audit\ battery\ —\ liveness\ again\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"capture\" for subject subj_w3c_audit_subject_b — grant or renew consent first","details":{"subjectId":"subj_w3c_audit_subject_b","scope":"capture","requiredScopes":["capture"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-019]: PASS — error.code == consent_required
+════════ [W3C-020] CONSENT FAIL-CLOSED: twin compile WITHOUT reconstruct grant → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/compile -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"reconstruct\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"reconstruct","requiredScopes":["reconstruct"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-020]: PASS — error.code == consent_required
+════════ [W3C-021] POST /consent-grants — grant reconstruct scope, subject A ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_259bf95989df7e7179c3514e\"\,\"purpose\":\"w3c\ audit\ battery\ —\ reconstruction\"\,\"scopes\":\[\"reconstruct\"\]\,\"ttlHours\":2\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwxfj004nlrb4min02qhi","subjectId":"subj_259bf95989df7e7179c3514e","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery — reconstruction","scopes":["reconstruct"],"operations":["reconstruct"],"outputs":["derived"],"expiresAt":"2026-10-01T20:45:39.005Z","revokedAt":null,"createdAt":"2026-10-01T18:45:39.007Z"}
+VERDICT: PASS 
+
+════════ [W3C-022] twin compile WITH reconstruct grant → 202 durable jobId ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/compile -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-compile-001 --data \{\}
+STATUS: 202 (expected: 202 J)
+CONTENT-TYPE: application/json
+BODY:
+{"jobId":"cmupvwxhn004tlrb40l3femty"}
+VERDICT: PASS 
+
+════════ [W3C-023] GET /jobs/:id — honest durable-job state (no fabricated progress) ══════════
+CMD: curl http://localhost:3230/api/v1/jobs/cmupvwxhn004tlrb40l3femty -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwxhn004tlrb40l3femty","kind":"twin.compile","status":"failed","progress":0.18,"steps":[{"key":"load","label":"Load twin","status":"done"},{"key":"consent","label":"Verify reconstruct consent (server-enforced)","status":"done","detail":"1 active grant(s)"},{"key":"evidence","label":"Load evidence assets","status":"running"},{"key":"analyze","label":"VLM evidence-set analysis (vlm-recon-1)","status":"pending"},{"key":"compile","label":"Compile HTIR v1","status":"pending"},{"key":"persist","label":"Publish immutable TwinVersion","status":"pending"},{"key":"artifact","label":"Create twin-review Solution Artifact","status":"pending"}],"output":null,"error":"validation_failed: no evidence assets found for twin cmupvwt4y003blrb4qri7fu3v across complete sessions — nothing to reconstruct","createdAt":"2026-10-01T18:45:39.083Z","finishedAt":"2026-10-01T18:45:39.108Z"}
+VERDICT: PASS 
+
+── db-probe: published TwinVersion fixture → {"id":"cmupvwyd80001lrprci2etysh","twinId":"cmupvwt4y003blrb4qri7fu3v","version":1,"status":"published"} ──
+
+════════ [W3C-025] CONSENT FAIL-CLOSED: POST /renders WITHOUT render grant → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/renders -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"twinId\":\"cmupvwt4y003blrb4qri7fu3v\"\,\"twinVersionId\":\"cmupvwyd80001lrprci2etysh\"\,\"kind\":\"image\"\,\"style\":\"photorealistic\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"render\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"render","requiredScopes":["render"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-025]: PASS — error.code == consent_required
+════════ [W3C-026] POST /consent-grants — grant render scope, subject A ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_259bf95989df7e7179c3514e\"\,\"purpose\":\"w3c\ audit\ battery\ —\ render\"\,\"scopes\":\[\"render\"\]\,\"ttlHours\":2\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwyiy004xlrb4ve9sgotx","subjectId":"subj_259bf95989df7e7179c3514e","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery — render","scopes":["render"],"operations":["render"],"outputs":["derived"],"expiresAt":"2026-10-01T20:45:40.425Z","revokedAt":null,"createdAt":"2026-10-01T18:45:40.426Z"}
+VERDICT: PASS 
+
+════════ [W3C-027] POST /renders WITH render grant → 202 ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/renders -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"twinId\":\"cmupvwt4y003blrb4qri7fu3v\"\,\"twinVersionId\":\"cmupvwyd80001lrprci2etysh\"\,\"kind\":\"image\"\,\"style\":\"photorealistic\"\}
+STATUS: 202 (expected: 202 J)
+CONTENT-TYPE: application/json
+BODY:
+{"jobId":"cmupvwyk70055lrb438ocf9tj"}
+VERDICT: PASS 
+
+════════ [W3C-028] POST /agent-bodies — create agent body ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/agent-bodies -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"name\":\"w3c-audit-body\"\,\"role\":\"auditor\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwyrx005dlrb4py6ml6hv","name":"w3c-audit-body","role":"auditor","version":1,"capabilities":["conversation","performance","tool-use"],"tools":["none"],"permissions":["speak","listen","gesture"],"memory":{"policy":"session-scoped working memory only; no persistent biometric memory","workingNotes":[]},"evaluation":{"rubric":["responsiveness","presence","instruction-faithfulness"],"minScore":0.7},"possessions":[],"createdAt":"2026-10-01T18:45:40.749Z"}
+VERDICT: PASS 
+
+════════ [W3C-029] CONSENT FAIL-CLOSED: agent-avatar-session with twin WITHOUT embodiment grant → consent_required ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/agent-avatar-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"bodyId\":\"cmupvwyrx005dlrb4py6ml6hv\"\,\"soulKey\":\"soul-one-fast\"\,\"twinId\":\"cmupvwt4y003blrb4qri7fu3v\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"consent_required","message":"no active consent grant with scope \"embodiment\" for subject subj_259bf95989df7e7179c3514e — grant or renew consent first","details":{"subjectId":"subj_259bf95989df7e7179c3514e","scope":"embodiment","requiredScopes":["embodiment"]}}}
+VERDICT: PASS 
+
+EXTRA [W3C-029]: PASS — error.code == consent_required
+════════ [W3C-030] POST /consent-grants — grant embodiment scope, subject A ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_259bf95989df7e7179c3514e\"\,\"purpose\":\"w3c\ audit\ battery\ —\ embodiment\"\,\"scopes\":\[\"embodiment\"\]\,\"ttlHours\":2\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwz2q005hlrb4lunfkp5f","subjectId":"subj_259bf95989df7e7179c3514e","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery — embodiment","scopes":["embodiment"],"operations":["embodiment"],"outputs":["derived"],"expiresAt":"2026-10-01T20:45:41.137Z","revokedAt":null,"createdAt":"2026-10-01T18:45:41.138Z"}
+VERDICT: PASS 
+
+════════ [W3C-031] agent-avatar-session WITH embodiment grant → 201 ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/agent-avatar-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"bodyId\":\"cmupvwyrx005dlrb4py6ml6hv\"\,\"soulKey\":\"soul-one-fast\"\,\"twinId\":\"cmupvwt4y003blrb4qri7fu3v\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwz4o005nlrb4z3bcmj4i","bodyId":"cmupvwyrx005dlrb4py6ml6hv","bodyName":"w3c-audit-body","soulKey":"soul-one-fast","soulLabel":"System-One · Fast","routingClass":"system_one","twinId":"cmupvwt4y003blrb4qri7fu3v","twinDisplayName":"W3C Audit Twin A","status":"live","turns":[],"createdAt":"2026-10-01T18:45:41.209Z","endedAt":null}
+VERDICT: PASS 
+
+════════ [W3C-032] IDEMPOTENCY: POST /templates with X-Idempotency-Key → 201 ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/templates -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-idem-001 --data \{\"name\":\"w3c-audit-template\"\,\"description\":\"battery\ template\"\,\"status\":\"draft\"\,\"scenes\":\[\{\"name\":\"scene-one\"\,\"parameters\":\{\"angle\":\"front\"\}\}\]\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","description":"battery template","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[{"id":"cmupvwzdn005slrb4wz3f7e33","templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"scene-one","parameters":{"angle":"front"},"createdAt":"2026-10-01T18:45:41.532Z"}],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:45:41.532Z","updatedAt":"2026-10-01T18:45:41.532Z"}
+VERDICT: PASS 
+
+════════ [W3C-033] IDEMPOTENCY REPLAY: same key, same body → 200 with existing record ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/templates -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-idem-001 --data \{\"name\":\"w3c-audit-template\"\,\"description\":\"battery\ template\"\,\"status\":\"draft\"\,\"scenes\":\[\{\"name\":\"scene-one\"\,\"parameters\":\{\"angle\":\"front\"\}\}\]\}
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","description":"battery template","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[{"id":"cmupvwzdn005slrb4wz3f7e33","templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"scene-one","parameters":{"angle":"front"},"createdAt":"2026-10-01T18:45:41.532Z"}],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:45:41.532Z","updatedAt":"2026-10-01T18:45:41.532Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-033]: PASS — replay returns the SAME template id
+── db-probe: template count for key w3c-idem-001 → {"idempotencyKey":"w3c-idem-001","count":1} ──
+
+EXTRA [W3C-034]: PASS — exactly ONE template row for the idempotency key (no duplicates)
+════════ [W3C-035] IDEMPOTENCY REPLAY: same key, DIFFERENT body → 200 with existing (recorded behavior) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/templates -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-idem-001 --data \{\"name\":\"w3c-audit-template-CHANGED\"\,\"description\":\"different\ body\"\}
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","description":"battery template","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[{"id":"cmupvwzdn005slrb4wz3f7e33","templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"scene-one","parameters":{"angle":"front"},"createdAt":"2026-10-01T18:45:41.532Z"}],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:45:41.532Z","updatedAt":"2026-10-01T18:45:41.532Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-035]: PASS — replay still returns the SAME template id (first-write wins)
+════════ [W3C-036] IDEMPOTENCY: POST compile with key w3c-compile-002 → 202 ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/compile -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-compile-002 --data \{\}
+STATUS: 202 (expected: 202 J)
+CONTENT-TYPE: application/json
+BODY:
+{"jobId":"cmupvwzkj005ylrb4raax0f12"}
+VERDICT: PASS 
+
+════════ [W3C-037] IDEMPOTENCY REPLAY: compile same key → 202 with same jobId ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/compile -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json -H x-idempotency-key:\ w3c-compile-002 --data \{\}
+STATUS: 202 (expected: 202 J)
+CONTENT-TYPE: application/json
+BODY:
+{"jobId":"cmupvwzkj005ylrb4raax0f12"}
+VERDICT: PASS 
+
+EXTRA [W3C-037]: PASS — replay returns the SAME jobId
+── db-probe: job count for key w3c-compile-002 → {"idempotencyKey":"w3c-compile-002","count":1} ──
+
+EXTRA [W3C-038]: PASS — exactly ONE job row for the idempotency key
+════════════════ PART 1 SUMMARY ═════════════════
+PASS: 48   FAIL: 0   INFO: 0

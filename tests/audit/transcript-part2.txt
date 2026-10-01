@@ -1,0 +1,384 @@
+W3.C F8 AUDIT BATTERY — PART 2 — base http://localhost:3230 — 2026-10-01T18:46:00Z
+── session A re-bootstrap: HTTP 200 ──
+
+════════ [W3C-101] POST /api-keys — create READ-ONLY key (secret shown once) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/api-keys -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"name\":\"w3c-ro\"\,\"scopes\":\[\"read\"\]\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"key":{"id":"cmupvxf0r0018lryttz9jso91","name":"w3c-ro","prefix":"you_sk_qt8HXxh","scopes":["read"],"lastUsedAt":null,"revokedAt":null,"createdAt":"2026-10-01T18:46:01.804Z"},"secret":"you_sk_qt8HXxh1f6eiCeUTAGI6GWgT06xPXj0ZbkUBk3h74cg"}
+VERDICT: PASS 
+
+EXTRA [W3C-101]: PASS — secret is a you_sk_… token
+════════ [W3C-102] SCOPE: bearer read-only key GET /templates → allowed ══════════
+CMD: curl http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_qt8HXxh1f6eiCeUTAGI6GWgT06xPXj0ZbkUBk3h74cg
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[{"id":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","description":"battery template","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[{"id":"cmupvwzdn005slrb4wz3f7e33","templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"scene-one","parameters":{"angle":"front"},"createdAt":"2026-10-01T18:45:41.532Z"}],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:45:41.532Z","updatedAt":"2026-10-01T18:45:41.532Z"}]
+VERDICT: PASS 
+
+════════ [W3C-103] SCOPE ENFORCEMENT: read-only key POST /templates (write) → forbidden ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_qt8HXxh1f6eiCeUTAGI6GWgT06xPXj0ZbkUBk3h74cg -H content-type:\ application/json --data \{\"name\":\"should-not-exist\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"forbidden","message":"api key lacks the \"write\" scope required for POST /api/v1/templates"}}
+VERDICT: PASS 
+
+EXTRA [W3C-103]: PASS — error.code == forbidden + scope message
+════════ [W3C-104] SCOPE ENFORCEMENT: read-only key POST /twins (write) → forbidden ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins -H authorization:\ Bearer\ you_sk_qt8HXxh1f6eiCeUTAGI6GWgT06xPXj0ZbkUBk3h74cg -H content-type:\ application/json --data \{\"displayName\":\"nope\"\}
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"forbidden","message":"api key lacks the \"write\" scope required for POST /api/v1/twins"}}
+VERDICT: PASS 
+
+════════ [W3C-105] POST /api-keys — create read+write key ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/api-keys -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"name\":\"w3c-rw\"\,\"scopes\":\[\"read\"\,\"write\"\]\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"key":{"id":"cmupvxfi0001elryt066pli6f","name":"w3c-rw","prefix":"you_sk_q6RKWt3","scopes":["read","write"],"lastUsedAt":null,"revokedAt":null,"createdAt":"2026-10-01T18:46:02.424Z"},"secret":"you_sk_q6RKWt3ycwxieGpqy0DDMR1VGA7YhThx2VvOnYqMr1o"}
+VERDICT: PASS 
+
+════════ [W3C-106] bearer read+write key GET /templates → allowed ══════════
+CMD: curl http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_q6RKWt3ycwxieGpqy0DDMR1VGA7YhThx2VvOnYqMr1o
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[{"id":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","description":"battery template","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[{"id":"cmupvwzdn005slrb4wz3f7e33","templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"scene-one","parameters":{"angle":"front"},"createdAt":"2026-10-01T18:45:41.532Z"}],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:45:41.532Z","updatedAt":"2026-10-01T18:45:41.532Z"}]
+VERDICT: PASS 
+
+════════ [W3C-107] bearer read+write key POST /templates → allowed ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_q6RKWt3ycwxieGpqy0DDMR1VGA7YhThx2VvOnYqMr1o -H content-type:\ application/json --data \{\"name\":\"w3c-bearer-template\"\,\"description\":\"created\ via\ bearer\ write\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxfjm001klrytlqohzks3","name":"w3c-bearer-template","description":"created via bearer write","version":1,"status":"draft","manifest":{"captureChecklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","expectedSignal":"frontal landmarks, facial proportions, skin detail","optional":false},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","expectedSignal":"profile geometry, nose/jaw depth cues","optional":false},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","expectedSignal":"body proportions, shoulder/hip ratios","optional":false},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","expectedSignal":"hand geometry, finger articulation range","optional":true},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","expectedSignal":"hair coverage, hairline geometry","optional":true},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","expectedSignal":"viseme/voice profile, mouth articulation","optional":true}],"stylePresets":[]},"scenes":[],"analysis":null,"analyzedAt":null,"createdAt":"2026-10-01T18:46:02.482Z","updatedAt":"2026-10-01T18:46:02.482Z"}
+VERDICT: PASS 
+
+════════ [W3C-108] DELETE /api-keys/:id — revoke read-only key ══════════
+CMD: curl -X DELETE http://localhost:3230/api/v1/api-keys/cmupvxf0r0018lryttz9jso91 -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxf0r0018lryttz9jso91","name":"w3c-ro","prefix":"you_sk_qt8HXxh","scopes":["read"],"lastUsedAt":"2026-10-01T18:46:02.143Z","revokedAt":"2026-10-01T18:46:03.267Z","createdAt":"2026-10-01T18:46:01.804Z"}
+VERDICT: PASS 
+
+════════ [W3C-108b] REVOKED KEY: bearer read-only (revoked) GET → unauthenticated ══════════
+CMD: curl http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_qt8HXxh1f6eiCeUTAGI6GWgT06xPXj0ZbkUBk3h74cg
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"api key has been revoked"}}
+VERDICT: PASS 
+
+════════ [W3C-109] malformed bearer token → unauthenticated ══════════
+CMD: curl http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ not-a-key
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"authentication required"}}
+VERDICT: PASS 
+
+════════ [W3C-110] unknown bearer token → unauthenticated ══════════
+CMD: curl http://localhost:3230/api/v1/templates -H authorization:\ Bearer\ you_sk_unknownunknownunknownunknownunknownunknown
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"unknown api key"}}
+VERDICT: PASS 
+
+════════ [W3C-111] RAW-EVIDENCE RESTRICTION: bearer key (even write) GET /evidence/:id/url → session-only route rejects bearer ══════════
+CMD: curl http://localhost:3230/api/v1/evidence/cmupvwuto003rlrb4oe5oj5ah/url -H authorization:\ Bearer\ you_sk_q6RKWt3ycwxieGpqy0DDMR1VGA7YhThx2VvOnYqMr1o
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"no session cookie present"}}
+VERDICT: PASS 
+
+════════ [W3C-112] GET /evidence/:id/url with session cookie → signed expiring URL ══════════
+CMD: curl http://localhost:3230/api/v1/evidence/cmupvwuto003rlrb4oe5oj5ah/url -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"url":"/api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png?exp=1790880964&sig=miEuMzgBhKaB3EUikVIzIpiUJ9CnjnUmP4Pb3LHVYnQ","expiresAt":"2026-10-01T18:56:04.330Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-112]: PASS — url carries exp + sig capability params
+════════ [W3C-113] SIGNED URL fetch → object bytes (image/png) ══════════
+CMD: curl http://localhost:3230/api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png\?exp=1790880964\&sig=miEuMzgBhKaB3EUikVIzIpiUJ9CnjnUmP4Pb3LHVYnQ
+STATUS: 200 (expected: 200)
+CONTENT-TYPE: image/png
+BODY:
+[binary body, 70 bytes, content-type image/png — not printed]
+VERDICT: PASS 
+
+EXTRA [W3C-113f]: PASS — served image/png (70 bytes)
+════════ [W3C-114] SIGNED URL without exp/sig → rejected ══════════
+CMD: curl http://localhost:3230/api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"forbidden","message":"missing exp/sig capability parameters"}}
+VERDICT: PASS 
+
+════════ [W3C-115] SIGNED URL with tampered sig → rejected ══════════
+CMD: curl http://localhost:3230/api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png\?exp=9999999999\&sig=tampereddeadbeef
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"forbidden","message":"invalid or expired signature"}}
+VERDICT: PASS 
+
+── sign-url.mjs: correctly-signed but EXPIRED capability → /api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png?exp=1790880305&sig=Xg4epklZp1psG5JC9JMLEjCfrEPh1jZ21T9Sfi_TEl4 ──
+
+════════ [W3C-116] SIGNED URL correctly signed but EXPIRED → rejected (expiry enforced) ══════════
+CMD: curl http://localhost:3230/api/v1/storage/evidence/497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581.png\?exp=1790880305\&sig=Xg4epklZp1psG5JC9JMLEjCfrEPh1jZ21T9Sfi_TEl4
+STATUS: 403 (expected: 403 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"forbidden","message":"invalid or expired signature"}}
+VERDICT: PASS 
+
+── sign-url.mjs: correctly-signed but UNSAFE traversal key → /api/v1/storage/evidence/../../db/custom.db?exp=1790880965&sig=8tOwZ8dweHGZk6MkR99Lv1DQ_-YEbptOq3aXHr5l3l0 ──
+
+════════ [W3C-117] path traversal without signature → rejected (framework 404; route never sees dot-segments) ══════════
+CMD: curl --path-as-is http://localhost:3230/api/v1/storage/evidence/../../db/custom.db
+STATUS: 404 (expected: REJECT)
+CONTENT-TYPE: text/html;
+BODY:
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/_next/static/chunks/apps_web_src_app_globals_1wvyn-h.css" data-precedence="next_static/chunks/apps_web_src_app_globals_1wvyn-h.css"/><link re
+[…html truncated, 14414 bytes]
+VERDICT: PASS 
+
+════════ [W3C-118] path traversal WITH valid signature (unsafe key) → rejected (framework-level; isSafeKey guard is defense-in-depth) ══════════
+CMD: curl --path-as-is http://localhost:3230/api/v1/storage/evidence/../../db/custom.db\?exp=1790880965\&sig=8tOwZ8dweHGZk6MkR99Lv1DQ_-YEbptOq3aXHr5l3l0
+STATUS: 404 (expected: REJECT)
+CONTENT-TYPE: text/html;
+BODY:
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/_next/static/chunks/apps_web_src_app_globals_1wvyn-h.css" data-precedence="next_static/chunks/apps_web_src_app_globals_1wvyn-h.css"/><link re
+[…html truncated, 14647 bytes]
+VERDICT: PASS 
+
+── db-probe: tenant B fixtures → {"tenantId":"cmupvxiu50000lr8e29z85ajw","userId":"cmupvxiuj0002lr8ez98nyamj","sessionId":"cmupvxiun0004lr8e6kf652lz","token":"w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6"} ──
+
+════════ [W3C-120] tenant B session is functional (GET /session with its cookie) ══════════
+CMD: curl http://localhost:3230/api/v1/session -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"user":{"id":"cmupvxiuj0002lr8ez98nyamj","email":"w3c-audit-b@you.dev","name":"Audit Tenant B","role":"owner"},"tenant":{"id":"cmupvxiu50000lr8e29z85ajw","name":"W3.C Audit Tenant B","slug":"audit-tenant-b"}}
+VERDICT: PASS 
+
+════════ [W3C-121] TENANT ISOLATION: tenant B GET /twins → empty list (no tenant A data) ══════════
+CMD: curl http://localhost:3230/api/v1/twins -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[]
+VERDICT: PASS 
+
+EXTRA [W3C-121]: PASS — list is empty (length 0)
+════════ [W3C-122] TENANT ISOLATION: tenant B GET /twins/:twinA → 404, no cross-tenant read ══════════
+CMD: curl http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 404 (expected: 404 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"not_found","message":"twin \"cmupvwt4y003blrb4qri7fu3v\" not found"}}
+VERDICT: PASS 
+
+════════ [W3C-123] TENANT ISOLATION: tenant B GET /captures/:capA → 404 ══════════
+CMD: curl http://localhost:3230/api/v1/captures/cmupvwtsb003hlrb4erd44rea -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 404 (expected: 404 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"not_found","message":"capture session \"cmupvwtsb003hlrb4erd44rea\" not found"}}
+VERDICT: PASS 
+
+════════ [W3C-124] TENANT ISOLATION: tenant B cannot mint a signed URL for tenant A evidence → 404 ══════════
+CMD: curl http://localhost:3230/api/v1/evidence/cmupvwuto003rlrb4oe5oj5ah/url -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 404 (expected: 404 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"not_found","message":"evidence asset \"cmupvwuto003rlrb4oe5oj5ah\" not found"}}
+VERDICT: PASS 
+
+════════ [W3C-125] TENANT ISOLATION: tenant B POST compile on tenant A twin → 404 ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvwt4y003blrb4qri7fu3v/compile -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6 -H content-type:\ application/json --data \{\}
+STATUS: 404 (expected: 404 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"not_found","message":"twin \"cmupvwt4y003blrb4qri7fu3v\" not found"}}
+VERDICT: PASS 
+
+════════ [W3C-126] TENANT ISOLATION: tenant B GET /verification-sessions → empty (no tenant A sessions) ══════════
+CMD: curl http://localhost:3230/api/v1/verification-sessions -H Cookie:\ you_session=w3cAuditTenantB21e8fef7698f77a3acf9b3f595be92389853f568e82fa3d6
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[]
+VERDICT: PASS 
+
+EXTRA [W3C-126]: PASS — list is empty (length 0)
+════════ [W3C-127] CONTROL: tenant A cookie GET /twins still sees twin A ══════════
+CMD: curl http://localhost:3230/api/v1/twins -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[{"id":"cmupvwt4y003blrb4qri7fu3v","displayName":"W3C Audit Twin A","personName":"Audit Subject A","subjectId":"subj_259bf95989df7e7179c3514e","status":"capturing","currentVersion":0,"createdAt":"2026-10-01T18:45:33.442Z","updatedAt":"2026-10-01T18:45:34.286Z"}]
+VERDICT: PASS 
+
+EXTRA [W3C-127]: PASS — twin A present in tenant A list
+════════ [W3C-128] create twin B (same tenant, different subject — for subject isolation) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"displayName\":\"W3C\ Audit\ Twin\ B\"\,\"personName\":\"Audit\ Subject\ B\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxlj5001ulrytdzfpeg2y","displayName":"W3C Audit Twin B","personName":"Audit Subject B","subjectId":"subj_219e70162a718e0cbc5bf35d","status":"draft","currentVersion":0,"createdAt":"2026-10-01T18:46:10.241Z","updatedAt":"2026-10-01T18:46:10.241Z"}
+VERDICT: PASS 
+
+════════ [W3C-129] open capture session B ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins/cmupvxlj5001ulrytdzfpeg2y/capture-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxm7u0020lrytmu2ggb4j","twinId":"cmupvxlj5001ulrytdzfpeg2y","status":"pending","checklist":[{"item":"Frontal face","capability":"face","region":"face.front","instructions":"Look straight into the camera with a neutral expression, even lighting, hair away from the face. Remove glasses if comfortable.","status":"pending","expectedSignal":"frontal landmarks, facial proportions, skin detail"},{"item":"Profile face","capability":"face","region":"face.profile","instructions":"Turn 90° so one ear faces the camera. Keep the jawline and nose silhouette visible against a plain background.","status":"pending","expectedSignal":"profile geometry, nose/jaw depth cues"},{"item":"Frontal silhouette","capability":"silhouette","region":"silhouette.front","instructions":"Stand at full height facing the camera, arms slightly away from the body, fitted clothing, plain background.","status":"pending","expectedSignal":"body proportions, shoulder/hip ratios"},{"item":"Hands","capability":"hands","region":"hands","instructions":"Show both hands: palms open toward the camera, then backs of the hands, fingers relaxed and spread. Optional but improves articulation.","status":"pending","expectedSignal":"hand geometry, finger articulation range"},{"item":"Back of hair","capability":"hair","region":"hair.back","instructions":"Turn away from the camera to capture the back of your head and hairline. Optional — needed for high hair coverage.","status":"pending","expectedSignal":"hair coverage, hairline geometry"},{"item":"Speech sample","capability":"speech","region":"speech","instructions":"Read a short passage aloud on camera (≈20s), natural pace. Optional — enables voice and mouth-motion profiles.","status":"pending","expectedSignal":"viseme/voice profile, mouth articulation"}],"instructions":"Complete the checklist below. Even, front-facing light and a plain background give the strongest signal.","error":null,"createdAt":"2026-10-01T18:46:11.130Z","completedAt":null,"assets":[]}
+VERDICT: PASS 
+
+════════ [W3C-130] grant capture scope for subject B (twin B's subject) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_219e70162a718e0cbc5bf35d\"\,\"purpose\":\"w3c\ audit\ battery\ —\ subject\ B\ capture\"\,\"scopes\":\[\"capture\"\]\,\"ttlHours\":2\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxmd40024lrytwmbxjxaa","subjectId":"subj_219e70162a718e0cbc5bf35d","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c audit battery — subject B capture","scopes":["capture"],"operations":["capture"],"outputs":["derived"],"expiresAt":"2026-10-01T20:46:11.319Z","revokedAt":null,"createdAt":"2026-10-01T18:46:11.320Z"}
+VERDICT: PASS 
+
+════════ [W3C-131] upload evidence for twin B → 201 (ASSET_B) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/captures/cmupvxm7u0020lrytmu2ggb4j/assets -b /tmp/w3c-cookiesA.txt -F file=@/tmp/w3c-fixture.png\;type=image/png -F regions=\[\"face.front\"\]
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxn2p002alrytdvtkyh2i","kind":"image","regions":["face.front"],"contentHash":"497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581","bytes":70,"mime":"image/png","quality":null,"createdAt":"2026-10-01T18:46:12.241Z"}
+VERDICT: PASS 
+
+════════ [W3C-132] verification session for twin B's subject (VERIF_B2) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_219e70162a718e0cbc5bf35d\"\,\"purpose\":\"w3c\ audit\ battery\ —\ subject\ B\ liveness\"\,\"twinId\":\"cmupvxlj5001ulrytdzfpeg2y\"\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxn4o002ilrytnbl6vmw5","subjectId":"subj_219e70162a718e0cbc5bf35d","twinId":"cmupvxlj5001ulrytdzfpeg2y","purpose":"w3c audit battery — subject B liveness","method":"liveness-challenge","status":"pending","challenge":{"challengeId":"vc_366c215d1a2d4f38","nonce":"931faf313952902c513d027c","variant":"hands-raise","prompt":"Face the camera, then raise both hands to chest height with palms open and fingers spread.","instructions":"One photo of the face and one of both palms at chest height, fingers relaxed and spread.","requiredRegions":["face.front","hands"],"issuedAt":"2026-10-01T18:46:12.312Z","expiresAt":"2026-10-01T18:56:12.312Z","consumedAt":null},"evidenceAssetIds":[],"result":null,"consentGrantId":"cmupvxmd40024lrytwmbxjxaa","expiresAt":"2026-10-01T19:46:12.312Z","createdAt":"2026-10-01T18:46:12.313Z","submittedAt":null,"evaluatedAt":null}
+VERDICT: PASS 
+
+════════ [W3C-133] SUBJECT ISOLATION: verification-session (subject B) referencing subject A's EvidenceAsset → rejected ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions/cmupvxn4o002ilrytnbl6vmw5/evidence -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"evidenceAssetIds\":\[\"cmupvwuto003rlrb4oe5oj5ah\"\]\}
+STATUS: 400 (expected: 400 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"validation_failed","message":"evidence asset(s) belong to a different subject: cmupvwuto003rlrb4oe5oj5ah — only evidence of subject subj_219e70162a718e0cbc5bf35d may back this verification session"}}
+VERDICT: PASS 
+
+EXTRA [W3C-133]: PASS — error message names the subject mismatch
+════════ [W3C-134] CONTROL: verification-session evidence with SAME-subject asset → accepted (in_review) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/verification-sessions/cmupvxn4o002ilrytnbl6vmw5/evidence -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"evidenceAssetIds\":\[\"cmupvxn2p002alrytdvtkyh2i\"\]\}
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxn4o002ilrytnbl6vmw5","subjectId":"subj_219e70162a718e0cbc5bf35d","twinId":"cmupvxlj5001ulrytdzfpeg2y","purpose":"w3c audit battery — subject B liveness","method":"liveness-challenge","status":"in_review","challenge":{"challengeId":"vc_366c215d1a2d4f38","nonce":"931faf313952902c513d027c","variant":"hands-raise","prompt":"Face the camera, then raise both hands to chest height with palms open and fingers spread.","instructions":"One photo of the face and one of both palms at chest height, fingers relaxed and spread.","requiredRegions":["face.front","hands"],"issuedAt":"2026-10-01T18:46:12.312Z","expiresAt":"2026-10-01T18:56:12.312Z","consumedAt":"2026-10-01T18:46:13.217Z"},"evidenceAssetIds":["cmupvxn2p002alrytdvtkyh2i"],"result":null,"consentGrantId":"cmupvxmd40024lrytwmbxjxaa","expiresAt":"2026-10-01T19:46:12.312Z","createdAt":"2026-10-01T18:46:12.313Z","submittedAt":"2026-10-01T18:46:13.217Z","evaluatedAt":null}
+VERDICT: PASS 
+
+EXTRA [W3C-134]: PASS — session transitioned to in_review
+════════ [W3C-135] EVENTS: GET /events?type=template.created → envelopes ══════════
+CMD: curl http://localhost:3230/api/v1/events\?type=template.created -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[{"id":"cmupvxfjp001olryt1iohnkm9","type":"template.created","entityType":"template","entityId":"cmupvxfjm001klrytlqohzks3","payload":{"templateId":"cmupvxfjm001klrytlqohzks3","name":"w3c-bearer-template","version":1,"status":"draft","sceneRecipes":0},"createdAt":"2026-10-01T18:46:02.486Z"},{"id":"cmupvwzdr005wlrb47q1vs62l","type":"template.created","entityType":"template","entityId":"cmupvwzdn005rlrb4jf6u55mk","payload":{"templateId":"cmupvwzdn005rlrb4jf6u55mk","name":"w3c-audit-template","version":1,"status":"draft","sceneRecipes":1},"createdAt":"2026-10-01T18:45:41.535Z"}]
+VERDICT: PASS 
+
+EXTRA [W3C-135]: PASS — every event has id/type/entityType/entityId/payload/createdAt
+════════ [W3C-136] EVENTS: GET /events?limit=1 → single envelope ══════════
+CMD: curl http://localhost:3230/api/v1/events\?limit=1 -b /tmp/w3c-cookiesA.txt
+STATUS: 200 (expected: 200 J)
+CONTENT-TYPE: application/json
+BODY:
+[{"id":"cmupvxntx002qlrytvad2khew","type":"verification.session.evidence_submitted","entityType":"verification_session","entityId":"cmupvxn4o002ilrytnbl6vmw5","payload":{"sessionId":"cmupvxn4o002ilrytnbl6vmw5","addedAssetIds":["cmupvxn2p002alrytdvtkyh2i"],"totalAssetIds":1},"createdAt":"2026-10-01T18:46:13.222Z"}]
+VERDICT: PASS 
+
+EXTRA [W3C-136]: PASS — limit respected (length 1)
+── listener.mjs started on :3231 (request-bin) ──
+
+════════ [W3C-138] WEBHOOKS: POST /webhooks — register endpoint (consent.granted) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/webhooks -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"url\":\"http://localhost:3231/hook\"\,\"events\":\[\"consent.granted\"\]\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxp9a002slrytk5xzqwwy","url":"http://localhost:3231/hook","events":["consent.granted"],"active":true,"createdAt":"2026-10-01T18:46:15.069Z"}
+VERDICT: PASS 
+
+EXTRA [W3C-138]: PASS — endpoint view does NOT expose the signing secret
+════════ [W3C-139] WEBHOOKS: trigger consent.granted event (new grant) ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/consent-grants -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"subjectId\":\"subj_219e70162a718e0cbc5bf35d\"\,\"purpose\":\"w3c\ webhook\ trigger\"\,\"scopes\":\[\"render\"\]\,\"ttlHours\":1\}
+STATUS: 201 (expected: 201 J)
+CONTENT-TYPE: application/json
+BODY:
+{"id":"cmupvxpe7002ylrytjct0f9xa","subjectId":"subj_219e70162a718e0cbc5bf35d","granteeId":"tenant:cmupvwst50000lrb43md58ru4","purpose":"w3c webhook trigger","scopes":["render"],"operations":["render"],"outputs":["derived"],"expiresAt":"2026-10-01T19:46:15.246Z","revokedAt":null,"createdAt":"2026-10-01T18:46:15.248Z"}
+VERDICT: PASS 
+
+── listener capture (verbatim): {"ts":"2026-10-01T18:46:15.315Z","method":"POST","url":"/hook","contentType":"application/json","userAgent":"you-webhooks/1","body":"{\"id\":\"cmupvxpec0032lryttczx4xhk\",\"type\":\"consent.granted\",\"entityType\":\"consent_grant\",\"entityId\":\"cmupvxpe7002ylrytjct0f9xa\",\"payload\":{\"grantId\":\"cmupvxpe7002ylrytjct0f9xa\",\"subjectId\":\"subj_219e70162a718e0cbc5bf35d\",\"purpose\":\"w3c webhook trigger\",\"scopes\":[\"render\"],\"expiresAt\":\"2026-10-01T19:46:15.246Z\"},\"createdAt\":\"2026-10-01T18:46:15.252Z\"}"} ──
+
+════════ [W3C-140] WEBHOOK DELIVERY: endpoint received the event ══════════
+{"ts":"2026-10-01T18:46:15.315Z","method":"POST","url":"/hook","contentType":"application/json","userAgent":"you-webhooks/1","body":"{\"id\":\"cmupvxpec0032lryttczx4xhk\",\"type\":\"consent.granted\",\"entityType\":\"consent_grant\",\"entityId\":\"cmupvxpe7002ylrytjct0f9xa\",\"payload\":{\"grantId\":\"cmupvxpe7002ylrytjct0f9xa\",\"subjectId\":\"subj_219e70162a718e0cbc5bf35d\",\"purpose\":\"w3c webhook trigger\",\"scopes\":[\"render\"],\"expiresAt\":\"2026-10-01T19:46:15.246Z\"},\"createdAt\":\"2026-10-01T18:46:15.252Z\"}"}
+VERDICT: PASS — POST body is the documented event envelope (id/type/entityType/entityId/payload/createdAt)
+
+── db-probe: delivery records → [{"id":"cmupvxpef0034lrytrx99v4en","eventId":"cmupvxpec0032lryttczx4xhk","status":"delivered","attempts":1,"lastError":null}] ──
+
+════════ [W3C-141] WEBHOOK DELIVERY RECORDS: PASS — recorded delivered, 1 attempt ══════════
+
+════════ [W3C-142] DELETE /webhooks/:id → 204 ══════════
+CMD: curl -X DELETE http://localhost:3230/api/v1/webhooks/cmupvxp9a002slrytk5xzqwwy -b /tmp/w3c-cookiesA.txt
+STATUS: 204 (expected: 204)
+CONTENT-TYPE: <none>
+BODY:
+
+VERDICT: PASS 
+
+════════ [W3C-143] UNMATCHED ROUTE: GET /api/v1/nonexistent → record verbatim (outside API route set) ══════════
+CMD: curl http://localhost:3230/api/v1/nonexistent
+STATUS: 404 (expected: INFO)
+CONTENT-TYPE: text/html;
+BODY:
+<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/_next/static/chunks/apps_web_src_app_globals_1wvyn-h.css" data-precedence="next_static/chunks/apps_web_src_app_globals_1wvyn-h.css"/><link re
+[…html truncated, 14409 bytes]
+VERDICT: INFO 
+
+════════ [W3C-144] MALFORMED JSON BODY: POST /twins with invalid JSON → validation envelope ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\"displayName\":\ 
+STATUS: 400 (expected: 400 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"validation_failed","message":"request body is not valid JSON"}}
+VERDICT: PASS 
+
+════════ [W3C-145] MISSING REQUIRED FIELD: POST /twins without displayName → validation envelope ══════════
+CMD: curl -X POST http://localhost:3230/api/v1/twins -b /tmp/w3c-cookiesA.txt -H content-type:\ application/json --data \{\}
+STATUS: 400 (expected: 400 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"validation_failed","message":"field \"displayName\" is required (non-empty string)"}}
+VERDICT: PASS 
+
+── db-probe: expire session A cookie → {"matched":1} ──
+
+════════ [W3C-146] SESSION TTL FAIL-CLOSED: GET /session with expired cookie → unauthenticated ══════════
+CMD: curl http://localhost:3230/api/v1/session -b /tmp/w3c-cookiesA.txt
+STATUS: 401 (expected: 401 E)
+CONTENT-TYPE: application/json
+BODY:
+{"error":{"code":"unauthenticated","message":"no active session — POST /api/v1/session to create one"}}
+VERDICT: PASS 
+
+════════════════ PART 2 SUMMARY ═════════════════
+PASS: 56   FAIL: 0   INFO: 1
