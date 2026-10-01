@@ -16,13 +16,13 @@ Wave 2 note (2026-10-01): the wave-1 implementation source was promoted into thi
 [x] A1 tenant/user/application/auth (session cookie + scoped API keys)
 [x] A2 Evidence/Capture schema + R2 upload flow (local object-store adapter, signed URLs)
 [x] A3 HTIR/Twin persistence (immutable published TwinVersions)
-[>] A4 Consent/verification/provenance (consent server-enforced, provenance + audit events live; verification-session APIs pending)
+[>] A4 Consent/verification/provenance (consent server-enforced, provenance + audit events live; verification-session APIs landed e2742ca — create/read/evidence + liveness challenges verified; evaluate route remains for the W3.A continuation)
 [x] A5 event envelope/jobs/webhooks (durable jobs, events, webhook fan-out w/ delivery records)
 [x] A6 Performance APIs (from-text)
 [x] A7 Agent Avatar control API (bodies/souls/possession/sessions/turns)
-[ ] A8 SDK JS (repo package not yet updated; in-app typed client exists)
+[ ] A8 SDK JS (repo package not yet updated; in-app typed client exists; W3.A continuation in flight)
 [x] A9 usage/metering
-[ ] A10 integration tests (deferred per environment constraints)
+[ ] A10 integration tests (W3.A continuation in flight)
 
 ## Worker B — Studio/UX
 [x] B1 Stripe survey (public-pattern translation only, no authed inspection)
@@ -40,7 +40,7 @@ Wave 2 note (2026-10-01): the wave-1 implementation source was promoted into thi
 ## Worker C — Labs/AI
 [x] C1 adapter contracts
 [x] C2 Technology Registry (33 candidates, honest licenses/statuses)
-[>] C3 Compute Broker (provider-neutral contract + local executor; quote/submit surface pending)
+[x] C3 Compute Broker (provider-neutral contract + local executor; quote/submit/status/cancel landed 0490dc0 with honest labels + refusals, avatar tool execution, benchmark latency honesty)
 [x] C4 reconstruction pipeline (vlm-recon-1, real VLM compute)
 [x] C5 performance/retargeting (from-text tracks; retargeting not applicable wave 1)
 [x] C6 render adapters (svg-portrait-1 deterministic, ai-image-1, ai-video-1)
