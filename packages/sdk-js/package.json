@@ -1,1 +1,12 @@
-{"name":"@you/sdk","version":"0.1.0","private":true,"type":"module","main":"src/index.ts"}
+{
+  "name": "@you/sdk-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone typed JavaScript client for the YOU platform /api/v1 surface (Worker A lane, A8).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
