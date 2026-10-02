@@ -25,7 +25,7 @@ import type {
   HtirNeuralAppearance,
   RenderStyle,
 } from '../contracts';
-import { visionAnalyze } from '../ai/zai';
+import { reconVisionAnalyze } from '../ai/recon-provider';
 import { getObject } from '../core/storage';
 import { clamp, round } from '../lab/determinism';
 
@@ -297,12 +297,12 @@ export interface AssetQualityResult {
 
 export async function analyzeAssetQuality(asset: VlmReconAssetInput): Promise<AssetQualityResult> {
   const dataUrl = await assetToDataUrl(asset);
-  const res = await visionAnalyze(dataUrl, QUALITY_PROMPT, { thinking: false });
+  const res = await reconVisionAnalyze(dataUrl, QUALITY_PROMPT, { thinking: false });
   const parsed = await parseModelJson<{
     usable?: boolean; blur?: string; lighting?: string; issues?: unknown;
     observedRegions?: unknown; score?: number;
   }>(res.content, async () => {
-    const retry = await visionAnalyze(dataUrl, QUALITY_PROMPT + JSON_ONLY_REMINDER, { thinking: false });
+    const retry = await reconVisionAnalyze(dataUrl, QUALITY_PROMPT + JSON_ONLY_REMINDER, { thinking: false });
     return retry.content;
   });
 
@@ -370,11 +370,11 @@ export async function analyzeEvidenceSet(
   for (const asset of assets) {
     const dataUrl = await assetToDataUrl(asset);
     const prompt = `${EVIDENCE_SET_PROMPT}\n\nTarget render style for the avatar: "${style}".`;
-    const res = await visionAnalyze(dataUrl, prompt, { thinking: false });
+    const res = await reconVisionAnalyze(dataUrl, prompt, { thinking: false });
     llmCalls += 1;
     totalLatencyMs += res.latencyMs;
     const parsed = await parseModelJson<Record<string, unknown>>(res.content, async () => {
-      const retry = await visionAnalyze(dataUrl, prompt + JSON_ONLY_REMINDER, { thinking: false });
+      const retry = await reconVisionAnalyze(dataUrl, prompt + JSON_ONLY_REMINDER, { thinking: false });
       llmCalls += 1;
       totalLatencyMs += retry.latencyMs;
       return retry.content;
