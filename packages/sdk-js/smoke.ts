@@ -105,7 +105,53 @@ async function main() {
   const analyzed = await you.templates.get(t1.id);
   console.log('sdk templates.analyze → job', job.status, 'analysis gaps:', analyzed.analysis?.evidenceGaps.length);
 
-  console.log('\nSDK SMOKE COMPLETE — @you/sdk-js end-to-end OK');
+  // ─── P6.A8 surfaces: apiKeys (incl. rotate/revoke), webhooks, usage,
+  // subjects.export, maintenance.gcStorage ─────────────────────────────────
+  const created = await you.apiKeys.create({ name: `sdk-key ${stamp}`, scopes: ['read', 'write'] });
+  if (!created.secret.startsWith('you_sk_')) throw new Error('apiKeys.create must return the one-time secret');
+  console.log('sdk apiKeys.create →', created.key.id, 'secret one-time');
+
+  const rotated = await you.apiKeys.rotate(created.key.id);
+  if (rotated.key.id !== created.key.id) throw new Error('rotate must keep the key id');
+  if (rotated.secret === created.secret) throw new Error('rotate must change the secret');
+  console.log('sdk apiKeys.rotate → same id, new one-time secret');
+
+  // the OLD secret must be dead: build a client with it and expect 401
+  // (plain fetch — NO session cookie: cookie auth would mask the dead key)
+  const stale = new YouClient({ baseUrl: BASE, apiKey: created.secret });
+  let staleWorked = true;
+  try { await stale.overview(); } catch (e) { staleWorked = !(e instanceof YouApiError && e.status === 401); }
+  if (staleWorked) throw new Error('the old secret must 401 after rotation');
+  console.log('sdk rotated-out secret → 401 (no overlap window)');
+
+  // the NEW secret works (Bearer over the API-key surface)
+  const fresh = new YouClient({ baseUrl: BASE, apiKey: rotated.secret });
+  const twinsViaKey = await fresh.twins.list();
+  console.log('sdk api-key auth → twins.list', twinsViaKey.length, 'readable');
+
+  // api keys cannot trigger maintenance (operator-only) — the honest 403
+  let got403 = false;
+  try { await fresh.maintenance.gcStorage(); } catch (e) { got403 = e instanceof YouApiError && e.status === 403; }
+  if (!got403) throw new Error('maintenance via api key must 403');
+  console.log('sdk maintenance.gcStorage via api key → 403 (operator-only)');
+
+  const revoked = await you.apiKeys.revoke(rotated.key.id);
+  if (!revoked.revokedAt) throw new Error('revoke must set revokedAt');
+  console.log('sdk apiKeys.revoke → terminal at', revoked.revokedAt);
+
+  const hooks = await you.webhooks.list();
+  void hooks;
+  console.log('sdk webhooks.list →', hooks.length, 'endpoints');
+
+  const usage = await you.usage();
+  console.log('sdk usage → period', usage.period ?? 'n/a', '| entries:', (usage.events ?? []).length ?? 0);
+
+  const twinForExport = await you.twins.create({ displayName: `SDK Export ${stamp}` });
+  const exported = await you.subjects.export(twinForExport.subjectId);
+  if (exported.subjectId !== twinForExport.subjectId) throw new Error('export subject mismatch');
+  console.log('sdk subjects.export →', exported.twins.length, 'twin(s),', exported.evidenceAssets.length, 'asset(s)');
+
+  console.log('\nSDK SMOKE COMPLETE — @you/sdk-js end-to-end OK (P6.A8 surfaces covered)');
 }
 
 main().catch((err) => {
