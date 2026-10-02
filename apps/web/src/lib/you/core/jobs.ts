@@ -23,6 +23,11 @@ export type DurableJobKind = JobKind | 'template.analyze';
 
 /** Per-kind step templates — honest stage maps executors advance via report(). */
 const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> = {
+  'maintenance.gc-storage': [
+    { key: 'enumerate', label: 'Enumerate stored objects' },
+    { key: 'reference', label: 'Build the referenced-key set' },
+    { key: 'sweep', label: 'Delete unreferenced objects' },
+  ],
   'capture.quality': [
     { key: 'validate', label: 'Validate evidence set' },
     { key: 'analyze', label: 'Analyze quality and coverage' },

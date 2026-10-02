@@ -145,6 +145,10 @@ paths:
     get:
       summary: lab — technologies
       responses: {"200": {"description": "OK"}}
+  /maintenance/gc-storage:
+    post:
+      summary: Maintenance — sweep unreferenced storage objects (durable job)
+      responses: {"202": {"description": "Accepted"}, "403": {"description": "Forbidden"}}
   /overview:
     get:
       summary: Overview
