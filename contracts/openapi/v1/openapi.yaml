@@ -190,6 +190,10 @@ paths:
     get:
       summary: Storage read-through item
       responses: {"200": {"description": "OK"}}
+  /subjects/{id}/export:
+    get:
+      summary: Subjects — portable data export (rows + expiring evidence capabilities)
+      responses: {"200": {"description": "OK"}}
   /templates:
     get:
       summary: Templates
