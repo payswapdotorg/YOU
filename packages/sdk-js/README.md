@@ -95,3 +95,31 @@ pending / expired / already-evaluated), never by a silent replay.
   W3.A delivery (`fixed-gates.txt`)
 - End-to-end exercised by `tests/contract/verification-flow.test.mjs` (A10)
   against a real booted `apps/web` server.
+
+
+## Surface coverage (P6.A8)
+
+| Resource | Methods |
+|---|---|
+| session | get, create |
+| overview | stats |
+| twins | list, create, get, versions, compile, remove |
+| captures | list, get, create, upload, complete |
+| consent | list, create, revoke |
+| performances | list, create, fromText, get |
+| renders | list, create, get |
+| templates | list, create, get, analyze |
+| verificationSessions | list, create, get, submitEvidence, evaluate |
+| agents / lab / develop / artifacts | (see src/client.ts) |
+| jobs | get (poll) |
+| **apiKeys** | list, create (one-time secret), **rotate** (in-place, no overlap), revoke (terminal) |
+| **webhooks** | list, create, delete |
+| **usage** | summary |
+| **feedback** | submit |
+| **evidenceRequests** | list, create, fulfill (multipart) |
+| **subjects** | export (portable bundle + expiring evidence capabilities) |
+| **maintenance** | gcStorage (operator-session-only server-side) |
+
+The smoke (`bun run packages/sdk-js/smoke.ts` against a booted server)
+exercises the full lifecycle including rotation semantics and the
+operator-only 403.

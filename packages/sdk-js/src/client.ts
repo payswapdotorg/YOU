@@ -284,6 +284,70 @@ export class YouClient {
   readonly jobs = {
     get: (id: string) => this.call<JobView>(`/jobs/${id}`),
   };
+
+  // ─── API keys (P6.A8: the auth surface incl. rotation) ────────────────────
+  readonly apiKeys = {
+    list: () => this.call<ApiKeyView[]>('/api-keys'),
+    /** The secret is returned EXACTLY ONCE (sha256-only server storage). */
+    create: (body: { name: string; scopes: Array<'read' | 'write'> }, idempotencyKey?: string) =>
+      this.call<{ key: ApiKeyView; secret: string }>('/api-keys', { method: 'POST', body: JSON.stringify(body), idempotencyKey }),
+    /** Revocation is terminal (rows kept for audit). */
+    revoke: (id: string) => this.call<ApiKeyView>(`/api-keys/${id}`, { method: 'DELETE' }),
+    /**
+     * Rotate the secret IN PLACE (P6.A3): same id/name/scopes; the OLD secret
+     * dies at the same instant the new one is born. The new secret is returned
+     * exactly once. Revoked keys refuse rotation (409).
+     */
+    rotate: (id: string) => this.call<{ key: ApiKeyView; secret: string }>(`/api-keys/${id}/rotate`, { method: 'POST' }),
+  };
+
+  // ─── Webhooks / usage / feedback / evidence-requests ───────────────────────
+  readonly webhooks = {
+    list: () => this.call<WebhookEndpointView[]>('/webhooks'),
+    create: (body: { url: string; secret: string; events?: string[] }, idempotencyKey?: string) =>
+      this.call<WebhookEndpointView>('/webhooks', { method: 'POST', body: JSON.stringify(body), idempotencyKey }),
+    delete: (id: string) => this.call<void>(`/webhooks/${id}`, { method: 'DELETE' }),
+  };
+
+  readonly usage = () => this.call<UsageSummary>('/usage');
+
+  readonly feedback = {
+    submit: (body: { artifactId?: string; renderJobId?: string; twinVersionId?: string; rating: number; comment?: string }) =>
+      this.call<{ id: string }>('/feedback', { method: 'POST', body: JSON.stringify(body) }),
+  };
+
+  readonly evidenceRequests = {
+    list: () => this.call<EvidenceRequestView[]>('/evidence-requests'),
+    create: (body: { reason: string; capability: string; instructions?: string }, idempotencyKey?: string) =>
+      this.call<EvidenceRequestView>('/evidence-requests', { method: 'POST', body: JSON.stringify(body), idempotencyKey }),
+    fulfill: (id: string, upload: { file: Blob; filename: string; mime: string }) => {
+      const form = new FormData();
+      form.append('file', upload.file, upload.filename);
+      return this.call<EvidenceAssetView>(`/evidence-requests/${id}/fulfill`, { method: 'POST', body: form });
+    },
+  };
+
+  // ─── Data lifecycle (P6.A4 surfaces) ───────────────────────────────────────
+  /** Portable subject export: rows + expiring evidence download capabilities. */
+  readonly subjects = {
+    export: (subjectId: string) =>
+      this.call<{
+        subjectId: string;
+        exportedAt: string;
+        twins: Array<{ id: string; displayName: string }>;
+        consentGrants: Array<{ id: string; purpose: string }>;
+        evidenceAssets: Array<{ id: string; contentHash: string; downloadUrl: string; downloadUrlExpiresInSeconds: number }>;
+        [k: string]: unknown;
+      }>(`/subjects/${subjectId}/export`),
+  };
+
+  /**
+   * Storage GC (P6.A4): sweep unreferenced content-addressed objects.
+   * OPERATOR-ONLY server-side (API keys get 403 — use session auth).
+   */
+  readonly maintenance = {
+    gcStorage: () => this.call<{ jobId: string }>('/maintenance/gc-storage', { method: 'POST' }),
+  };
 }
 
 /** Construct a client from environment-style config (baseUrl + optional key). */
