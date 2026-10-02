@@ -7,9 +7,18 @@ import {
 import { SESSION_TTL_SECONDS, requireSession } from '@/lib/you/core/auth';
 import { handleRoute, unauthorized } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
+import { demoBootstrapEnabled } from '@/lib/you/core/config';
+import { serviceUnavailable } from '@/lib/you/core/errors';
 
 export async function POST(request: Request): Promise<Response> {
   return handleRoute(async () => {
+    // P6.A2: the demo bootstrap (auto-provisioned founder@you.dev tenant) is
+    // a dev affordance — production requires YOU_DEMO_BOOTSTRAP=1 to opt in.
+    if (!demoBootstrapEnabled()) {
+      throw serviceUnavailable(
+        'demo bootstrap is disabled — provision real users/auth (YOU_DEMO_BOOTSTRAP=1 only for staged demos)',
+      );
+    }
     const { tenantId, userId } = await ensureDemoContext();
     await trySeedLabBaseline(); // Worker C seam — never fatal
 
