@@ -1,7 +1,7 @@
 # YOU Production Checklist
 
 ## Blocking
-[ ] CI green on clean clone
+[x] CI green on clean clone  <!-- PR-1 closed: 7 consecutive green PRs through 25e8686 -->
 [ ] R2 production object storage
 [ ] hosted provider/GPU credentials
 [ ] F1 real authorized QA capture
@@ -11,16 +11,16 @@
 [ ] incident/rollback test
 
 ## Security
-[ ] API keys hashed/rotatable
-[ ] signed URL TTLs
+[x] API keys hashed/rotatable  <!-- P6.A3 bb339c6: sha256-only, in-place rotation, terminal revocation; api-key-lifecycle 4/4 -->
+[x] signed URL TTLs  <!-- 600s default, expiring HMAC capabilities, timing-safe compare; storage suites -->
 [ ] tenant isolation
 [ ] subject isolation
-[ ] upload validation
+[x] upload validation  <!-- mime allowlist + 10MB cap + consent gate + path-safe keys; contract suites -->
 [ ] malware/quarantine path
 [ ] SSRF controls
 [ ] security headers/CSP/CORS
-[ ] webhook replay/signature protection
-[ ] audit logs
+[x] webhook replay/signature protection  <!-- F-04: HMAC over timestamp+rawBody; hardening suite -->
+[x] audit logs  <!-- audit() on every mutating route incl. key.rotated; verified across suites -->
 [ ] retention/deletion enforcement
 [ ] abuse controls
 
