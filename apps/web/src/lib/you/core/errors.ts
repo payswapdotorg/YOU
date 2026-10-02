@@ -27,6 +27,8 @@ export const consentRequired = (
   message = 'an active consent grant with the required scope is needed for this subject',
   details?: unknown,
 ) => new HttpError(403, ERR.CONSENT_REQUIRED, message, details);
+export const serviceUnavailable = (message: string, details?: unknown) =>
+  new HttpError(503, ERR.SERVICE_UNAVAILABLE, message, details);
 export const notFound = (message = 'resource not found') =>
   new HttpError(404, ERR.NOT_FOUND, message);
 export const conflict = (message: string, details?: unknown) =>

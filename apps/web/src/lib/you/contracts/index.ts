@@ -672,5 +672,6 @@ export const ERR = {
   CONFLICT: 'conflict',
   RATE_LIMITED: 'rate_limited',
   POLICY: 'policy_blocked',
+  SERVICE_UNAVAILABLE: 'service_unavailable',
   INTERNAL: 'internal_error',
 } as const;
