@@ -52,6 +52,10 @@ paths:
     delete:
       summary: API keys item
       responses: {"204": {"description": "No Content"}}
+  /api-keys/{id}/rotate:
+    post:
+      summary: API keys — rotate secret in place
+      responses: {"201": {"description": "Created"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
   /artifacts/{id}:
     get:
       summary: Solution artifacts item
