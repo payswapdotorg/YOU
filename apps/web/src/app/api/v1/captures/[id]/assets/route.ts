@@ -9,6 +9,7 @@ import { requireConsent } from '@/lib/you/core/consent';
 import { badRequest, handleRoute, notFound, conflict } from '@/lib/you/core/errors';
 import { audit, emitEvent, recordUsage } from '@/lib/you/core/events';
 import { putObject } from '@/lib/you/core/storage';
+import { enforceRateLimit } from '@/lib/you/core/ratelimit';
 import { evidenceAssetView, parseJson } from '@/lib/you/core/views';
 import type { CaptureChecklistItem, CaptureRegion } from '@/lib/you/contracts';
 
@@ -36,6 +37,8 @@ export async function POST(
     if (session.status === 'complete' || session.status === 'failed') {
       throw conflict(`capture session "${id}" is already ${session.status}`);
     }
+
+    enforceRateLimit('asset-upload', auth.tenantId); // P6.A6 interim: per-tenant upload ceiling
 
     const contentType = request.headers.get('content-type') ?? '';
     if (!contentType.includes('multipart/form-data')) {
