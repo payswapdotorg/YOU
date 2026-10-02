@@ -1,25 +1,267 @@
 openapi: 3.1.0
 info:
   title: YOU API
-  version: 0.1.0
+  version: 1.0.0
+  summary: Frozen v1 production contract surface (P6.T2). Paths are relative to the server URL (/v1).
+  description: >-
+    Complete inventory of the /v1 HTTP surface as implemented at freeze
+    commit. This file is FROZEN: any change requires TL approval and a
+    version bump, and must update contracts/SHA256SUMS.v1 in the same
+    commit (CI enforces this via the contract-freeze gate).
 servers:
   - url: https://api.you.example/v1
 paths:
-  /twins:
-    post: {summary: Create Twin, responses: {"202": {description: Accepted}}}
-  /captures:
-    post: {summary: Start capture, responses: {"202": {description: Accepted}}}
-  /performances:
-    post: {summary: Create performance, responses: {"202": {description: Accepted}}}
-  /templates:
-    post: {summary: Register template, responses: {"202": {description: Accepted}}}
-  /renders:
-    post: {summary: Render reality, responses: {"202": {description: Accepted}}}
-  /try-ons:
-    post: {summary: Run virtual try-on, responses: {"202": {description: Accepted}}}
   /agent-avatar-sessions:
-    post: {summary: Start agent avatar session, responses: {"202": {description: Accepted}}}
+    post:
+      summary: Agent avatar sessions
+      responses: {"201": {"description": "Created"}}
+  /agent-avatar-sessions/{id}:
+    get:
+      summary: Agent avatar sessions item
+      responses: {"200": {"description": "OK"}}
+    delete:
+      summary: Agent avatar sessions item
+      responses: {"204": {"description": "No Content"}}
+  /agent-avatar-sessions/{id}/events:
+    post:
+      summary: Agent avatar sessions — emit event
+      responses: {"201": {"description": "Created"}}
+  /agent-bodies:
+    get:
+      summary: Agent bodies
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Agent bodies
+      responses: {"201": {"description": "Created"}}
+  /agent-bodies/{id}/possessions:
+    post:
+      summary: Agent bodies — attach possession
+      responses: {"201": {"description": "Created"}}
+  /agent-souls:
+    get:
+      summary: Agent souls
+      responses: {"200": {"description": "OK"}}
+  /api-keys:
+    get:
+      summary: API keys
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: API keys
+      responses: {"201": {"description": "Created"}}
+  /api-keys/{id}:
+    delete:
+      summary: API keys item
+      responses: {"204": {"description": "No Content"}}
+  /artifacts/{id}:
+    get:
+      summary: Solution artifacts item
+      responses: {"200": {"description": "OK"}}
+  /captures:
+    get:
+      summary: Capture sessions
+      responses: {"200": {"description": "OK"}}
+  /captures/{id}:
+    get:
+      summary: Capture sessions item
+      responses: {"200": {"description": "OK"}}
+  /captures/{id}/assets:
+    post:
+      summary: Capture sessions — attach assets
+      responses: {"201": {"description": "Created"}}
+  /captures/{id}/complete:
+    post:
+      summary: Capture sessions — complete
+      responses: {"202": {"description": "Accepted"}}
   /consent-grants:
-    post: {summary: Grant scoped permission, responses: {"201": {description: Created}}}
+    get:
+      summary: Consent grants
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Consent grants
+      responses: {"201": {"description": "Created"}}
+  /consent-grants/{id}:
+    delete:
+      summary: Consent grants item
+      responses: {"204": {"description": "No Content"}}
+  /events:
+    get:
+      summary: Events
+      responses: {"200": {"description": "OK"}}
+  /evidence-requests:
+    get:
+      summary: Evidence requests
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Evidence requests
+      responses: {"201": {"description": "Created"}}
+  /evidence-requests/{id}/fulfill:
+    post:
+      summary: Evidence requests — fulfill
+      responses: {"201": {"description": "Created"}}
+  /evidence/{id}/url:
+    get:
+      summary: Evidence URLs — signed URL
+      responses: {"200": {"description": "OK"}}
+  /feedback:
+    post:
+      summary: Feedback
+      responses: {"201": {"description": "Created"}}
+  /jobs/{id}:
+    get:
+      summary: Jobs item
+      responses: {"200": {"description": "OK"}}
+  /lab/failures:
+    get:
+      summary: lab — failure catalogue
+      responses: {"200": {"description": "OK"}}
+  /lab/objectives:
+    get:
+      summary: lab — objectives
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: lab — objectives
+      responses: {"201": {"description": "Created"}}
+  /lab/pipelines:
+    get:
+      summary: lab — pipelines
+      responses: {"200": {"description": "OK"}}
+  /lab/promotions:
+    get:
+      summary: lab — promotions
+      responses: {"200": {"description": "OK"}}
   /lab/runs:
-    post: {summary: Run Lab experiment, responses: {"202": {description: Accepted}}}
+    post:
+      summary: lab — runs
+      responses: {"202": {"description": "Accepted"}}
+  /lab/runs/{id}:
+    get:
+      summary: lab item
+      responses: {"200": {"description": "OK"}}
+  /lab/technologies:
+    get:
+      summary: lab — technologies
+      responses: {"200": {"description": "OK"}}
+  /overview:
+    get:
+      summary: Overview
+      responses: {"200": {"description": "OK"}}
+  /performances:
+    get:
+      summary: Performances
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Performances
+      responses: {"201": {"description": "Created"}}
+  /performances/from-text:
+    post:
+      summary: Performances — create from text
+      responses: {"202": {"description": "Accepted"}}
+  /performances/{id}:
+    get:
+      summary: Performances item
+      responses: {"200": {"description": "OK"}}
+  /renders:
+    get:
+      summary: Renders
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Renders
+      responses: {"202": {"description": "Accepted"}}
+  /renders/{id}:
+    get:
+      summary: Renders item
+      responses: {"200": {"description": "OK"}}
+  /session:
+    get:
+      summary: Client session
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Client session
+      responses: {"201": {"description": "Created"}}
+  /storage/{key}:
+    get:
+      summary: Storage read-through item
+      responses: {"200": {"description": "OK"}}
+  /templates:
+    get:
+      summary: Templates
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Templates
+      responses: {"200": {"description": "OK"}, "201": {"description": "Created"}}
+  /templates/{id}:
+    get:
+      summary: Templates item
+      responses: {"200": {"description": "OK"}}
+  /templates/{id}/analyze:
+    post:
+      summary: Templates — analyze
+      responses: {"202": {"description": "Accepted"}}
+  /twins:
+    get:
+      summary: Twins
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Twins
+      responses: {"201": {"description": "Created"}}
+  /twins/{id}:
+    get:
+      summary: Twins item
+      responses: {"200": {"description": "OK"}}
+    delete:
+      summary: Twins item
+      responses: {"204": {"description": "No Content"}}
+  /twins/{id}/capture-sessions:
+    post:
+      summary: Twins — capture-sessions
+      responses: {"201": {"description": "Created"}}
+  /twins/{id}/compile:
+    post:
+      summary: Twins — compile
+      responses: {"202": {"description": "Accepted"}}
+  /twins/{id}/versions:
+    get:
+      summary: Twins — list versions
+      responses: {"200": {"description": "OK"}}
+  /usage:
+    get:
+      summary: Usage metering
+      responses: {"200": {"description": "OK"}}
+  /verification-sessions:
+    get:
+      summary: Verification sessions
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Verification sessions
+      responses: {"201": {"description": "Created"}}
+  /verification-sessions/{id}:
+    get:
+      summary: Verification sessions item
+      responses: {"200": {"description": "OK"}}
+  /verification-sessions/{id}/evaluate:
+    post:
+      summary: Verification sessions — evaluate
+      responses: {"201": {"description": "Created"}}
+  /verification-sessions/{id}/evidence:
+    post:
+      summary: Verification sessions — attach evidence
+      responses: {"201": {"description": "Created"}}
+  /webhooks:
+    get:
+      summary: Webhooks
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Webhooks
+      responses: {"201": {"description": "Created"}}
+  /webhooks/{id}:
+    delete:
+      summary: Webhooks item
+      responses: {"204": {"description": "No Content"}}
+components:
+  schemas:
+    HTIR:
+      $ref: '../htir/v1/htir.schema.json'
+    LabWorld:
+      $ref: '../lab/v1/world.schema.json'
+    AgentPerformanceEvents:
+      $ref: '../events/v1/agent-performance-events.schema.json'
