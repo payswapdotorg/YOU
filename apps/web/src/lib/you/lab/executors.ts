@@ -24,7 +24,7 @@ import type {
   RenderStyle,
   SolutionArtifactManifest,
 } from '../contracts';
-import { signStorageUrl, putObject } from '../core/storage';
+import { signStorageUrl, putObject, deleteObject, listObjectKeys } from '../core/storage';
 import {
   analyzeAssetQuality,
   analyzeEvidenceSet,
@@ -1554,3 +1554,52 @@ registerExecutor({
   },
 });
 
+
+// ─── maintenance.gc-storage (P6.A4: deletion completeness) ───────────────────
+// Twin deletion cascades DB rows but intentionally retains content-addressed
+// storage bytes (keys can be shared across assets; deleting per-twin is
+// unsafe). This job sweeps objects that NO EvidenceAsset row references.
+registerExecutor({
+  kind: 'maintenance.gc-storage',
+  async execute(_input, ctx) {
+    const steps = new Steps([
+      ['enumerate', 'Enumerate stored objects'],
+      ['reference', 'Build the referenced-key set'],
+      ['sweep', 'Delete unreferenced objects'],
+    ]);
+
+    await ctx.report({ steps: steps.running('enumerate'), progress: 0.1, status: 'running' });
+    const stored = await listObjectKeys();
+    steps.done('enumerate', `${stored.length} objects`);
+    await ctx.report({ steps: steps.all(), progress: 0.35 });
+
+    const referenced = new Set(
+      (await db.evidenceAsset.findMany({ select: { storageKey: true } })).map((a) => a.storageKey),
+    );
+    steps.done('reference', `${referenced.size} referenced keys`);
+    await ctx.report({ steps: steps.all(), progress: 0.5 });
+
+    const orphans = stored.filter((k) => !referenced.has(k));
+    let swept = 0;
+    const failures: string[] = [];
+    for (const key of orphans) {
+      try {
+        await deleteObject(key);
+        swept += 1;
+      } catch (err) {
+        failures.push(`${key}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    steps.done('sweep', `${swept}/${orphans.length} swept${failures.length ? `, ${failures.length} FAILED` : ''}`);
+    await ctx.report({ steps: steps.all(), progress: 1 });
+
+    return {
+      output: {
+        storedObjects: stored.length,
+        referencedKeys: referenced.size,
+        sweptUnreferenced: swept,
+        ...(failures.length ? { sweepFailures: failures.slice(0, 20) } : {}),
+      },
+    };
+  },
+});

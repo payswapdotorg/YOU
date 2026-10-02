@@ -31,6 +31,7 @@ export type JobKind =
   | 'capture.quality'      // analyze evidence set → quality + deficiencies
   | 'twin.compile'         // reconstruction: evidence → HTIR → TwinVersion
   | 'render.image'         // HTIR(+performance) → image artifact
+  | 'maintenance.gc-storage' // delete unreferenced content-addressed objects (P6.A4)
   | 'render.video'         // HTIR(+performance) → video artifact
   | 'performance.fromText' // dialog text → performance tracks
   | 'lab.benchmark'        // objective → org comparison evidence

@@ -211,3 +211,57 @@ export async function r2GetObject(key: string, cfg: R2Config = r2Config()): Prom
   }
   return Buffer.from(await res.arrayBuffer());
 }
+
+// ─── maintenance operations (P6.A4 GC) ──────────────────────────────────────
+
+/** Delete an object; 404 is success (idempotent sweep). */
+export async function r2DeleteObject(key: string, cfg: R2Config = r2Config()): Promise<void> {
+  const { path, host } = objectUrl(cfg, key);
+  const signed = sigv4Sign(
+    { method: 'DELETE', path, headers: { host }, payload: Buffer.alloc(0) },
+    cfg,
+  );
+  const res = await fetch(signed.url, {
+    method: 'DELETE',
+    headers: { ...signed.headers, authorization: signed.authorization },
+  });
+  await res.arrayBuffer().catch(() => undefined); // drain
+  if (!res.ok && res.status !== 404) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`R2 DeleteObject ${key} failed: HTTP ${res.status} ${body.slice(0, 200)}`);
+  }
+}
+
+/**
+ * List object keys under the bucket (ListObjectsV2, paginated). Returns the
+ * raw <Key> extraction — a minimal, honest parser for the keys-only need
+ * (full XML parsing is out of scope; malformed XML throws).
+ */
+export async function r2ListKeys(cfg: R2Config = r2Config()): Promise<string[]> {
+  const { host } = { host: new URL(cfg.endpoint).host };
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const query: Record<string, string> = { 'list-type': '2', 'max-keys': '1000' };
+    if (token) query['continuation-token'] = token;
+    const signed = sigv4Sign(
+      { method: 'GET', path: `/${cfg.bucket}`, query, headers: { host }, payload: Buffer.alloc(0) },
+      cfg,
+    );
+    const res = await fetch(signed.url, {
+      method: 'GET',
+      headers: { ...signed.headers, authorization: signed.authorization },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`R2 ListObjectsV2 failed: HTTP ${res.status} ${body.slice(0, 200)}`);
+    }
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+      keys.push(m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'"));
+    }
+    const tm = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+    token = tm ? tm[1] : undefined;
+  } while (token);
+  return keys;
+}

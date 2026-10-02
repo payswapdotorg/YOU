@@ -24,10 +24,10 @@
 // never overwrites (a repeated key is byte-identical by construction).
 // ═══════════════════════════════════════════════════════════════════════════
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, readdir, writeFile, unlink } from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
-import { r2PutObject, r2GetObject } from '@/lib/you/core/r2';
+import { r2PutObject, r2GetObject, r2DeleteObject, r2ListKeys } from '@/lib/you/core/r2';
 
 const OBJECT_ROOT = path.join(process.cwd(), 'db', 'you-objects');
 const DEFAULT_TTL_SECONDS = 600;
@@ -196,3 +196,49 @@ export function verifyStorageSig(key: string, exp: string, sig: string): boolean
 }
 
 export const STORAGE_DEFAULT_TTL_SECONDS = DEFAULT_TTL_SECONDS;
+
+// ─── maintenance surface (P6.A4: deletion completeness / GC) ────────────────
+
+/** Delete an object from the ACTIVE backend; missing keys are success. */
+export async function deleteObject(key: string): Promise<void> {
+  if (!isSafeKey(key)) return;
+  if (storageBackend() === 'db') {
+    await db.youObject.deleteMany({ where: { key } });
+    return;
+  }
+  if (storageBackend() === 'r2') {
+    await r2DeleteObject(key);
+    return;
+  }
+  const abs = path.join(OBJECT_ROOT, key);
+  if (!abs.startsWith(OBJECT_ROOT + path.sep)) return; // traversal guard
+  await unlink(abs).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== 'ENOENT') throw err; // already gone = success
+  });
+}
+
+/** List every stored object key in the ACTIVE backend (GC enumeration). */
+export async function listObjectKeys(): Promise<string[]> {
+  if (storageBackend() === 'db') {
+    return db.youObject.findMany({ select: { key: true } }).then((rows) => rows.map((r) => r.key));
+  }
+  if (storageBackend() === 'r2') {
+    return r2ListKeys();
+  }
+  // fs: walk OBJECT_ROOT, join relative paths with '/'
+  const out: string[] = [];
+  async function walk(dir: string, prefix: string): Promise<void> {
+    let entries: import('fs').Dirent[];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // missing root = no objects
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) await walk(path.join(dir, e.name), prefix ? `${prefix}/${e.name}` : e.name);
+      else out.push(prefix ? `${prefix}/${e.name}` : e.name);
+    }
+  }
+  await walk(OBJECT_ROOT, '');
+  return out;
+}
