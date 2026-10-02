@@ -14,8 +14,12 @@ Status: FROZEN FOR IMPLEMENTATION
 9. docs/UX_STRIPE_SURVEY.md
 10. docs/IMPLEMENTATION_PLAN.md
 11. docs/TASK_LEDGER.md
-12. docs/adr/*
-13. tests/code/evidence
+12. docs/PHASE_6_HANDOFF.md
+13. docs/PRODUCTION_CHECKLIST.md
+14. docs/F1_OPERATOR_CAPTURE.md
+15. docs/INFRA_PROVISIONING.md
+16. docs/adr/*
+17. tests/code/evidence
 
 Chat history is not an implementation dependency.
 
