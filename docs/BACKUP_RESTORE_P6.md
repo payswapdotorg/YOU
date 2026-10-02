@@ -36,11 +36,22 @@ writer; `cp` fallback with the caveat disclosed) and verified with
    the db — restored data + same secret = same capabilities), and one known
    record round-trips.
 
-**Drill evidence (executed 2026-10-02, this station):** live db backed up
-while the dev server was running (consistent snapshot), a twin row was
-deleted, the backup restored, the twin returned; capability URLs issued
-before the backup still verified after restore (secret continuity).
-Recorded in the P6.A5 PR; the drill is re-runnable via the procedure above.
+**Drill evidence (executed 2026-10-02 ~19:48Z, this station):**
+- booted the app against `apps/web/db/custom.db`, created a session +
+  twin ("Drill Twin v3"), stopped the app;
+- `backup-db.sh` -> `backups/20261002T194825Z/` with
+  `integrity_check: ok`, rowcounts `tenants=1 twins=1 sessions=1`, sha256;
+- simulated catastrophic loss (deleted Tenant/Twin/Session rows);
+- `backup-db.sh --restore` -> checksum-verified, `RESTORE OK`;
+- verified: the twin row is back, counts match the backup's rowcounts.
+- **Live finding baked into the tooling:** a shell-exported `DATABASE_URL`
+  silently beats `.env` files (process env precedence) — dev servers were
+  writing to a DIFFERENT db than the one being backed up, and a naive
+  drill would have "passed" against an empty file. `backup-db.sh` now
+  targets the db the app actually uses (`DATABASE_URL` when absolute,
+  else the repo default); the precedence trap is documented here because
+  it WILL bite any operator who sources an env with DATABASE_URL set.
+- The drill is re-runnable via the procedure above.
 
 ## Hosted (production) procedure — after P6.T3
 
