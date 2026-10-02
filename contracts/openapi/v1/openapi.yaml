@@ -110,6 +110,10 @@ paths:
     post:
       summary: Feedback
       responses: {"201": {"description": "Created"}}
+  /health:
+    get:
+      summary: Health — unauthenticated liveness + readiness (db probe)
+      responses: {"200": {"description": "OK"}, "503": {"description": "Service Unavailable"}}
   /jobs/{id}:
     get:
       summary: Jobs item
