@@ -11,8 +11,15 @@
 //                     backend cannot write on Vercel lambdas (read-only
 //                     bundle root: ENOENT mkdir '/var/task/db'). The db
 //                     backend is the hosted dev-tier stand-in, exactly like
-//                     SQLite stands in for Neon locally; the production
-//                     target remains Cloudflare R2 behind this same seam.
+//                     SQLite stands in for Neon locally.
+//   "r2"            — bytes live in Cloudflare R2 (the S3-compatible XML
+//                     API with hand-rolled SigV4, core/r2.ts). The
+//                     production target (P6.A1). Requires YOU_R2_ACCOUNT_ID,
+//                     YOU_R2_ACCESS_KEY_ID, YOU_R2_SECRET_ACCESS_KEY and
+//                     YOU_R2_BUCKET; fails closed on any miss. Capability
+//                     URLs are backend-independent: objects are served
+//                     through the same /api/v1/storage route, so the frozen
+//                     v1 API contract is untouched.
 // Keys are content-addressed and immutable in BOTH backends — putObject
 // never overwrites (a repeated key is byte-identical by construction).
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20,18 +27,20 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
+import { r2PutObject, r2GetObject } from '@/lib/you/core/r2';
 
 const OBJECT_ROOT = path.join(process.cwd(), 'db', 'you-objects');
 const DEFAULT_TTL_SECONDS = 600;
 
-export type StorageBackend = 'fs' | 'db';
+export type StorageBackend = 'fs' | 'db' | 'r2';
 
 function storageBackend(): StorageBackend {
   const raw = (process.env.YOU_STORAGE_BACKEND ?? 'fs').trim().toLowerCase();
   if (raw === 'db') return 'db';
+  if (raw === 'r2') return 'r2';
   if (raw === 'fs' || raw === '') return 'fs';
   throw new Error(
-    `YOU_STORAGE_BACKEND must be "fs" or "db" (got "${raw}") — refusing to guess where bytes live`,
+    `YOU_STORAGE_BACKEND must be "fs", "db" or "r2" (got "${raw}") — refusing to guess where bytes live`,
   );
 }
 
@@ -122,6 +131,10 @@ export async function putObject(
         // — identical bytes by construction, same semantics as the FS 'wx' path.
         if (err?.code !== 'P2002') throw err;
       });
+  } else if (storageBackend() === 'r2') {
+    // Content addressing makes re-puts byte-identical; S3 PUT overwrite is a
+    // semantic no-op. Fail-closed config errors propagate (never fall back).
+    await r2PutObject(storageKey, buf, opts.mime);
   } else {
     const abs = path.join(OBJECT_ROOT, storageKey);
     await mkdir(path.dirname(abs), { recursive: true });
@@ -138,6 +151,9 @@ export async function getObject(key: string): Promise<Buffer | null> {
     const row = await db.youObject.findUnique({ where: { key } });
     if (!row) return null;
     return Buffer.from(row.bytes);
+  }
+  if (storageBackend() === 'r2') {
+    return r2GetObject(key); // 404 → null; transport/auth errors throw (fail closed)
   }
   const abs = path.join(OBJECT_ROOT, key);
   if (!abs.startsWith(OBJECT_ROOT + path.sep)) return null; // traversal guard (defense in depth)
