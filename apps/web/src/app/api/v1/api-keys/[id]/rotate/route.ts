@@ -12,6 +12,7 @@ import { requireApiAuth, sha256hex } from '@/lib/you/core/auth';
 import { conflict, handleRoute, notFound } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
 import { apiKeyView } from '@/lib/you/core/views';
+import { enforceRateLimit } from '@/lib/you/core/ratelimit';
 
 function newApiSecret(): string {
   // 32 random bytes → 43 url-safe base64 chars (no padding) — same shape as creation
@@ -25,6 +26,8 @@ export async function POST(
   return handleRoute(async () => {
     const auth = await requireApiAuth(request);
     const { id } = await params;
+
+    enforceRateLimit('api-key-mutation', auth.tenantId); // P6.A6 interim: secret-issuing surface
 
     const key = await db.apiKey.findFirst({ where: { id, tenantId: auth.tenantId } });
     if (!key) throw notFound(`api key "${id}" not found`);

@@ -7,6 +7,7 @@ import { requireApiAuth, sha256hex } from '@/lib/you/core/auth';
 import { badRequest, handleRoute, readJsonBody, reqString, reqStringArray } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
 import { apiKeyView } from '@/lib/you/core/views';
+import { enforceRateLimit } from '@/lib/you/core/ratelimit';
 
 const KEY_SCOPES = ['read', 'write'];
 
@@ -30,6 +31,8 @@ export async function POST(request: Request): Promise<Response> {
   return handleRoute(async () => {
     const auth = await requireApiAuth(request);
     const body = await readJsonBody(request);
+
+    enforceRateLimit('api-key-mutation', auth.tenantId); // P6.A6 interim: secret-issuing surface
 
     const name = reqString(body, 'name', { max: 120 });
     const scopes = reqStringArray(body, 'scopes');
