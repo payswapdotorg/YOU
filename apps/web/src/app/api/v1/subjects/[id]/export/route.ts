@@ -116,7 +116,9 @@ export async function GET(
       })),
       evidenceRequests: evidenceRequests.map((r) => ({
         id: r.id,
-        regions: r.regions,
+        // P6.A6-FULL tsc fix: EvidenceRequest carries `capability` (schema), not
+        // `regions` — the old key read a non-existent column (undefined).
+        capability: r.capability,
         status: r.status,
         createdAt: r.createdAt,
       })),

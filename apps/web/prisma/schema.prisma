@@ -395,7 +395,7 @@ model Job {
   id             String    @id @default(cuid())
   tenantId       String
   kind           String // capture.quality | twin.compile | render.image | render.video | performance.fromText | lab.benchmark
-  status         String    @default("queued") // queued|provisioning|running|collecting|succeeded|failed|cancelled|unavailable
+  status         String    @default("queued") // queued|provisioning|running|collecting|succeeded|failed|cancelled|unavailable|dead (terminal dead-letter after bounded retries, P6.A6-FULL)
   input          String    @default("{}") // JSON
   output         String? // JSON
   progress       Float     @default(0)

@@ -24,6 +24,7 @@ export type ApiKeyId = string;
 export const JOB_STATES = [
   'queued', 'provisioning', 'running', 'collecting',
   'succeeded', 'failed', 'cancelled', 'unavailable',
+  'dead', // terminal after exhausting bounded retries (P6.A6-FULL landing — TL contracts evolution, documented in core/jobs.ts)
 ] as const;
 export type JobState = (typeof JOB_STATES)[number];
 

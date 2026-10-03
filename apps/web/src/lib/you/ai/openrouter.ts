@@ -15,7 +15,13 @@
 //   YOU_RECON_TIMEOUT_MS   — per-call timeout (default 30000)
 //   YOU_RECON_BASE_URL     — API base (default https://openrouter.ai/api/v1;
 //                            tests point this at a local mock)
+//
+// P6.A6-FULL: every call runs under the 'openrouter' circuit breaker and the
+// shared bounded retry engine (core/retry.ts) — see openRouterVisionAnalyze.
 // ═══════════════════════════════════════════════════════════════════════════
+import { callWithBreaker, ProviderUnavailableError } from '../core/circuit-breaker';
+import { withRetries, defaultRetryOptions, type RetryOutcome } from '../core/retry';
+import { bumpCounter } from '../core/metrics';
 
 export const OPENROUTER_ADAPTER = {
   adapterId: 'vlm-recon-or-1',
@@ -35,15 +41,41 @@ export class OpenRouterProviderError extends Error {
   readonly operation: string;
   readonly causeMessage: string;
   readonly status?: number;
-  constructor(operation: string, cause: unknown, status?: number) {
+  /** Server-requested delay (Retry-After, ms) — honored by the retry engine. */
+  readonly retryAfterMs?: number;
+  /** Honest retryability hint for the shared classifier (timeouts/network). */
+  readonly retryable?: boolean;
+  constructor(
+    operation: string,
+    cause: unknown,
+    status?: number,
+    extra?: { retryAfterMs?: number; retryable?: boolean; attempts?: number },
+  ) {
     const causeMessage =
       cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : JSON.stringify(cause);
-    super(`openrouter provider error during ${operation}: ${causeMessage}`);
+    const attempts = extra?.attempts ?? 1;
+    super(
+      `openrouter provider error during ${operation}: ${causeMessage}` +
+        (attempts > 1 ? ` (after ${attempts} attempts)` : ''),
+    );
     this.name = 'OpenRouterProviderError';
     this.operation = operation;
     this.causeMessage = causeMessage;
     this.status = status;
+    this.retryAfterMs = extra?.retryAfterMs;
+    this.retryable = extra?.retryable;
   }
+}
+
+/** Parse a Retry-After response header (seconds or HTTP-date) into ms. */
+export function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const httpDate = Date.parse(trimmed);
+  if (!Number.isNaN(httpDate)) return Math.max(0, httpDate - Date.now());
+  return undefined;
 }
 
 export interface VisionResult {
@@ -82,6 +114,16 @@ export function openRouterConfig(): OpenRouterConfig {
  * vision shape OpenRouter proxies). `opts.model` overrides the env-derived
  * model — the P6.C5 registry passes the resolved model id here (single
  * recon vision call site).
+ *
+ * P6.A6-FULL composition (the textbook resilience4j/Poly shape — breaker
+ * INSIDE the retry loop, so the breaker observes EVERY failed attempt and a
+ * breaker-open refusal short-circuits the loop instead of hammering a down
+ * provider): each attempt is admitted by the 'openrouter' circuit breaker;
+ * 429/5xx/timeout/network failures retry with exponential backoff + jitter
+ * (Retry-After honored when sent, capped by the bounded law); 4xx fail fast;
+ * a breaker-open refusal returns the typed ProviderUnavailableError VERBATIM
+ * (non-retryable by classification — the breaker owns recovery). Latency is
+ * measured across the whole (possibly retried) sequence — real, never sampled.
  */
 export async function openRouterVisionAnalyze(
   imageBase64DataUrl: string,
@@ -91,34 +133,79 @@ export async function openRouterVisionAnalyze(
   const cfg = openRouterConfig();
   const model = opts.model?.trim() || cfg.model;
   const t0 = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-  try {
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${cfg.apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: imageBase64DataUrl } },
-            ],
-          },
-        ],
+  const outcome: RetryOutcome<Response> = await withRetries(
+    () =>
+      callWithBreaker('openrouter', async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+        try {
+          const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              authorization: `Bearer ${cfg.apiKey}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: prompt },
+                    { type: 'image_url', image_url: { url: imageBase64DataUrl } },
+                  ],
+                },
+              ],
+            }),
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            throw new OpenRouterProviderError(
+              'vision.http',
+              `HTTP ${res.status} ${body.slice(0, 300)}`,
+              res.status,
+              { retryAfterMs: parseRetryAfterMs(res.headers.get('retry-after')) },
+            );
+          }
+          return res;
+        } finally {
+          clearTimeout(timer);
+        }
       }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new OpenRouterProviderError('vision.http', `HTTP ${res.status} ${body.slice(0, 300)}`, res.status);
+    {
+      ...defaultRetryOptions(),
+      onRetry: (info) => {
+        bumpCounter('provider_retries', { provider: 'openrouter', operation: 'vision' });
+        console.warn(
+          `[you/openrouter] vision attempt ${info.attempt} failed (${String(info.error instanceof Error ? info.error.message : info.error).slice(0, 160)}) — retrying in ${info.delayMs}ms`,
+        );
+      },
+    },
+  );
+  if (!outcome.ok) {
+    const e = outcome.error;
+    // breaker fail-fast: the typed error surfaces VERBATIM (never wrapped —
+    // callers and the retry classifier match on its code)
+    if (e instanceof ProviderUnavailableError) throw e;
+    // rethrow the provider error verbatim on single-attempt failures (message
+    // contract preserved); wrap multi-attempt exhaustions with the honest count
+    if (e instanceof OpenRouterProviderError && outcome.attempts === 1) throw e;
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new OpenRouterProviderError(
+        'vision.timeout',
+        `no response within ${cfg.timeoutMs}ms`,
+        undefined,
+        { attempts: outcome.attempts },
+      );
     }
-    const data = (await res.json()) as {
+    throw new OpenRouterProviderError('vision', e, e instanceof OpenRouterProviderError ? e.status : undefined, {
+      attempts: outcome.attempts,
+      retryAfterMs: e instanceof OpenRouterProviderError ? e.retryAfterMs : undefined,
+    });
+  }
+  try {
+    const data = (await outcome.value.json()) as {
       model?: string;
       choices?: { message?: { content?: unknown } }[];
     };
@@ -129,11 +216,6 @@ export async function openRouterVisionAnalyze(
     return { content, latencyMs: Date.now() - t0, model: data?.model ?? 'unknown' };
   } catch (e) {
     if (e instanceof OpenRouterProviderError) throw e;
-    if (e instanceof Error && e.name === 'AbortError') {
-      throw new OpenRouterProviderError('vision.timeout', `no response within ${cfg.timeoutMs}ms`);
-    }
     throw new OpenRouterProviderError('vision', e);
-  } finally {
-    clearTimeout(timer);
   }
 }
