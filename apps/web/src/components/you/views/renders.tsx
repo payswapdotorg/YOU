@@ -28,6 +28,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { EmptyState, IdChip, KeyValue, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { JobSteps } from '@/components/you/lab/job-steps';
 
 const STYLES: RenderStyle[] = [
@@ -76,6 +77,9 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const [style, setStyle] = useState<RenderStyle>('photorealistic');
   const [adapter, setAdapter] = useState<string>('auto');
   const [performanceId, setPerformanceId] = useState<string>('none');
+  // P6.B8: typed error surface for honest refusals (503 provider/service
+  // unavailable, 429 rate-limited) — inline retry guidance, not a bare toast
+  const createErrors = useApiErrorSurface('Render creation');
 
   const twins = useQuery({ queryKey: ['twins'], queryFn: () => api.twins.list(), enabled: open });
   const versions = useQuery({
@@ -117,12 +121,17 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       );
     },
     onSuccess: (res) => {
+      createErrors.clear();
       onOpenChange(false);
       toast.success(`Render job ${res.jobId.slice(0, 8)} started`);
       window.dispatchEvent(new CustomEvent('you:render-job', { detail: res.jobId }));
     },
     onError: (err) => {
-      const msg = err instanceof YouApiError ? err.message : (err instanceof Error ? err.message : 'request failed');
+      // P6.B8: typed provider/service-unavailable or rate-limited refusals
+      // render the honest inline surface (retry guidance from retryAfterMs)
+      // inside the dialog instead of a bare toast
+      if (createErrors.capture(err)) return;
+      const msg = err instanceof Error ? err.message : 'request failed';
       toast.error(`Render failed — ${msg}`);
     },
   });
@@ -219,6 +228,11 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               </Select>
             </div>
           ) : null}
+          <ApiErrorSurface
+            surface={createErrors}
+            onRetry={() => create.mutate()}
+            retrying={create.isPending}
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

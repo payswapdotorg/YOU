@@ -3,9 +3,10 @@
 // Settings — read-only profile & environment facts for the local deployment,
 // plus the Twin deletion policy (danger zone, informational).
 // ═══════════════════════════════════════════════════════════════════════════
-import { AlertTriangle, Building2, Database, HardDrive, KeySquare, Moon, Palette, UserRound } from 'lucide-react';
+import { AlertTriangle, Building2, Database, HardDrive, KeySquare, Moon, Palette, ShieldCheck, UserRound } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { KeyValue, PageHeader, SectionCard } from '@/components/you/shared/primitives';
+import { SettingsOps } from '@/components/you/views/settings-ops';
 import { useYouStore } from '@/hooks/you/use-you-store';
 
 export function SettingsView() {
@@ -86,6 +87,12 @@ export function SettingsView() {
           </p>
         </SectionCard>
       </div>
+
+      {/* P6.B8 — operator maintenance surface: dead-letter queue (list /
+          replay / purge) + provider breaker states, over the existing
+          operator-gated maintenance/metrics routes. Non-operator sessions get
+          an honest gate notice from the backend's 403. */}
+      <SettingsOps />
 
       <section className="rounded-xl border border-red-500/30 bg-red-500/5">
         <header className="flex items-center gap-2.5 border-b border-red-500/20 px-5 py-3.5">

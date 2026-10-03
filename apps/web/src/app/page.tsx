@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useYouStore, type ViewId } from '@/hooks/you/use-you-store';
 import { api } from '@/lib/you/client/api';
 import { Toaster } from '@/components/ui/sonner';
+import { ViewErrorBoundary } from '@/components/you/shared/view-error-boundary';
 
 import { OverviewView } from '@/components/you/views/overview';
 import { TwinsView } from '@/components/you/views/twins';
@@ -286,7 +287,16 @@ function Shell() {
 
         <main className="flex-1">
           <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-            <ActiveView />
+            {/* P6.B8 — view-level error boundary: a render crash in any view
+                degrades to an honest crash surface instead of a blank page.
+                Resets when the active view changes; recovery returns to Overview. */}
+            <ViewErrorBoundary
+              view={view}
+              viewLabel={VIEW_TITLES[view]}
+              onRecover={() => navigate('overview')}
+            >
+              <ActiveView />
+            </ViewErrorBoundary>
           </div>
         </main>
       </div>
