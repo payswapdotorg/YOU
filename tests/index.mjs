@@ -57,5 +57,14 @@ import './contract/f1-recon.test.mjs';
 // seeding is the f1.reconstruct terminal state, mirroring the executor's
 // row shape — no network beyond 127.0.0.1)
 import './contract/f1-operator-flow.test.mjs';
+// P6.C6 Agent Body/Soul production runtime unit suite (imported statically —
+// pure unit over the runtime's zero-import half (agent/runtime-core.ts)
+// composed with the REAL resilience modules (core/retry.ts +
+// core/deadletter.ts — the exact engine core/jobs.ts wraps executors in):
+// capability manifest honesty, lifecycle + binding rule taxonomy, the
+// server-side capability enforcement law, retry-then-deadletter behavior,
+// event emission with real measured latencies, determinism, and the honest
+// HTTP 4xx/5xx taxonomy; no app boot, no network, no db)
+import './contract/agent-runtime.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

@@ -1,22 +1,29 @@
 'use client';
 // ═══════════════════════════════════════════════════════════════════════════
-// Agent Avatar Studio — AI-provider embodiment as a first-class surface.
-// Bodies (capability contracts) × Souls (runtime bindings) × Sessions.
-// A Body may be possessed by different Souls without changing its contract
-// (ARCHITECTURE §8). Avatar states render ONLY real emitted events.
+// Agent Avatar Studio — P6.C6 production Body/Soul runtime surface.
+//
+// Bodies (visual/physical avatar assets bound to a TwinVersion + role/tool
+// contract) × Souls (personality/behavior configuration bound to a Twin) ×
+// Sessions binding (Twin, Body, Soul) with consent provenance. Turns run as
+// durable agent.turn jobs through the resilience stack; the chat below is
+// REAL turn history (states = emitted performance events, per-turn seed and
+// model provenance, honest job-status joins). Degraded/error states follow
+// the B8 pattern (typed envelopes, retry guidance, consent surfaces).
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  ArrowRight, Bot, Brain, ChevronRight, Ghost, History, Loader2, Lock, MessageSquare,
-  Play, RefreshCcw, Send, ShieldAlert, Sparkles, StopCircle, Wrench,
+  Bot, ChevronRight, Ghost, History, Loader2, Lock, MessageSquare, Play, RefreshCcw,
+  Send, ShieldAlert, Sparkles, StopCircle, Wrench, Dices,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
 import type {
-  AgentAvatarSessionView, AgentBodyView, AgentPerformanceEvent, AgentSoulView, RoutingClass,
-} from '@/lib/you/contracts';
+  AgentRuntimeBodyView, AgentRuntimeSessionSummaryView, AgentRuntimeSessionView,
+  AgentRuntimeSoulView, AgentRuntimeTurnView,
+} from '@/lib/you/agent/runtime-core';
+import type { AgentPerformanceEvent } from '@/lib/you/contracts';
 import { useYouStore } from '@/hooks/you/use-you-store';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,16 +38,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { EmptyState, IdChip, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
-import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
-import { QueryError } from '@/components/you/build/confidence';
 import { AvatarStage } from '@/components/you/agent/avatar-stage';
 import { BodyCreateDialog } from '@/components/you/agent/body-create-dialog';
+import { SoulCreateDialog } from '@/components/you/agent/soul-create-dialog';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
+import { QueryError } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
-
-const ROUTING_LABEL: Record<RoutingClass, string> = {
-  system_one: 'fast routing',
-  system_two: 'deliberative routing',
-};
 
 function rel(iso?: string | null): string {
   if (!iso) return '—';
@@ -48,15 +51,15 @@ function rel(iso?: string | null): string {
 }
 
 function isConsentError(err: unknown): boolean {
-  return err instanceof YouApiError && (err.code === 'consent_required' || err.status === 403 || err.status === 409);
+  return err instanceof YouApiError && (err.code === 'consent_required' || err.status === 403);
 }
 
-function isNotImplemented(err: unknown): boolean {
-  return err instanceof YouApiError && (err.status === 501 || /not.?implemented/i.test(err.code));
+function isUnavailable(err: unknown): boolean {
+  return err instanceof YouApiError && (err.status === 503 || err.code === 'service_unavailable');
 }
 
 // ─── Current avatar state (real events only) ─────────────────────────────────
-function currentAvatarState(session: AgentAvatarSessionView | null | undefined) {
+function currentAvatarState(session: AgentRuntimeSessionView | null | undefined) {
   if (!session) return { state: null as AgentPerformanceEvent['type'] | null, at: null as string | null };
   const turnsWithStates = [...(session.turns ?? [])].reverse().filter((t) => t.states?.length);
   const last = turnsWithStates[0];
@@ -64,55 +67,55 @@ function currentAvatarState(session: AgentAvatarSessionView | null | undefined) 
   return { state: ev?.type ?? null, at: ev?.timestamp ?? null };
 }
 
-function allEvents(session: AgentAvatarSessionView | null | undefined): AgentPerformanceEvent[] {
+function allEvents(session: AgentRuntimeSessionView | null | undefined): AgentPerformanceEvent[] {
   if (!session) return [];
   return (session.turns ?? []).flatMap((t) => t.states ?? []);
 }
 
-// ─── Session history (real APIs only) ────────────────────────────────────────
-function useSessionHistory(known: AgentAvatarSessionView[]) {
-  const events = useQuery({
-    queryKey: ['develop-events', 'avatar-history'],
-    queryFn: () => api.develop.events({ limit: 100 }),
-    staleTime: 15_000,
-  });
+/** A turn exchange is still being driven by its durable job. */
+function turnJobPending(turn: AgentRuntimeTurnView): boolean {
+  return turn.jobId !== null && (turn.jobStatus === 'queued' || turn.jobStatus === 'running');
+}
 
-  const candidateIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const e of events.data ?? []) {
-      if (e.entityId && /avatar/i.test(e.entityType ?? '')) ids.push(e.entityId);
-    }
-    return [...new Set(ids)].slice(0, 6);
-  }, [events.data]);
-
-  const recovered = useQuery({
-    queryKey: ['agent-session-history', candidateIds],
-    queryFn: async () => {
-      const results = await Promise.allSettled(candidateIds.map((id) => api.agents.getSession(id)));
-      return results
-        .filter((r): r is PromiseFulfilledResult<AgentAvatarSessionView> => r.status === 'fulfilled')
-        .map((r) => r.value);
+// ─── Lifecycle control (activate/deactivate) ─────────────────────────────────
+function LifecycleButtons({
+  kind, id, status,
+}: { kind: 'body' | 'soul'; id: string; status: string }) {
+  const qc = useQueryClient();
+  const mutate = useMutation({
+    mutationFn: async (action: 'activate' | 'deactivate'): Promise<{ name: string; status: string }> => {
+      const updated =
+        kind === 'body'
+          ? await api.agentRuntime.updateBody(id, { action }, uid())
+          : await api.agentRuntime.updateSoul(id, { action }, uid());
+      return { name: updated.name, status: updated.status };
     },
-    enabled: candidateIds.length > 0,
+    onSuccess: (updated) => {
+      toast.success(`${kind === 'body' ? 'Body' : 'Soul'} “${updated.name}” is now ${updated.status}`);
+      qc.invalidateQueries({ queryKey: [kind === 'body' ? 'agent-runtime-bodies' : 'agent-runtime-souls'] });
+    },
+    onError: (err) => {
+      const msg = err instanceof YouApiError ? err.message : 'request failed';
+      toast.error(`Lifecycle transition failed — ${msg}`);
+    },
   });
-
-  const merged = useMemo(() => {
-    const map = new Map<string, AgentAvatarSessionView>();
-    for (const s of [...(recovered.data ?? []), ...known]) {
-      const prev = map.get(s.id);
-      if (!prev || new Date(s.createdAt) >= new Date(prev.createdAt)) map.set(s.id, s);
-    }
-    return [...map.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [recovered.data, known]);
-
-  return {
-    sessions: merged.slice(0, 8),
-    isRecovering: events.isPending || recovered.isPending,
-    // P6.B2: events-query failure surfaced honestly — the history list must
-    // not silently claim "no avatar sessions" when discovery itself failed.
-    eventsError: events.isError ? events.error : null,
-    refetchEvents: () => void events.refetch(),
-  };
+  return (
+    <div className="flex gap-1.5">
+      {status !== 'active' ? (
+        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={mutate.isPending}
+          onClick={() => mutate.mutate('activate')}>
+          {mutate.isPending && mutate.variables === 'activate' ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <Play className="size-3" aria-hidden />}
+          Activate
+        </Button>
+      ) : (
+        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400"
+          disabled={mutate.isPending} onClick={() => mutate.mutate('deactivate')}>
+          {mutate.isPending && mutate.variables === 'deactivate' ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <StopCircle className="size-3" aria-hidden />}
+          Deactivate
+        </Button>
+      )}
+    </div>
+  );
 }
 
 // ─── Chat column ─────────────────────────────────────────────────────────────
@@ -125,17 +128,20 @@ function SessionPanel({
   const qc = useQueryClient();
   const navigate = useYouStore((s) => s.navigate);
   const [message, setMessage] = useState('');
-  const [runtimeUnavailable, setRuntimeUnavailable] = useState(false);
-  const [swap, setSwap] = useState<{ fromKey: string; fromLabel: string; toKey: string; toLabel: string } | null>(null);
-  const [soulPicker, setSoulPicker] = useState('');
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const session = useQuery({
-    queryKey: ['agent-session', sessionId],
-    queryFn: () => api.agents.getSession(sessionId),
+    queryKey: ['agent-runtime-session', sessionId],
+    queryFn: () => api.agentRuntime.getSession(sessionId),
+    // poll while a durable turn job is in flight (and the session is live)
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data || data.status !== 'live') return false;
+      return data.turns.some(turnJobPending) ? 1200 : false;
+    },
   });
-  const souls = useQuery({ queryKey: ['agent-souls'], queryFn: () => api.agents.souls() });
 
   const data = session.data ?? null;
   const live = data?.status === 'live';
@@ -145,33 +151,25 @@ function SessionPanel({
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: 'nearest' }); }, [data?.turns.length, session.isFetching]);
 
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['agent-session', sessionId] });
-    qc.invalidateQueries({ queryKey: ['agent-bodies'] });
+    qc.invalidateQueries({ queryKey: ['agent-runtime-session', sessionId] });
+    qc.invalidateQueries({ queryKey: ['agent-runtime-sessions'] });
   };
 
-  // P6.B8: typed error surfaces for this panel's three mutation flows.
-  // capture() runs BEFORE the toasts: 503/429 provider refusals become
-  // inline retry guidance (derived from the backend's retryAfterMs, with one
-  // automatic retry after the window); everything capture() declines keeps
-  // its existing toast. Consent (403/409) and not-implemented (501) are never
-  // captured, so their dedicated flows below stay intact.
-  const turnErrors = useApiErrorSurface('Avatar turn');
-  const possessErrors = useApiErrorSurface('Soul swap');
-  const endErrors = useApiErrorSurface('Session end');
-
   const sendTurn = useMutation({
-    mutationFn: () => api.agents.sendTurn(sessionId, message),
+    mutationFn: () => api.agentRuntime.sendTurn(sessionId, message, uid()),
     onSuccess: () => {
-      turnErrors.clear();
       setMessage('');
-      setRuntimeUnavailable(false);
-      qc.invalidateQueries({ queryKey: ['agent-session', sessionId] });
+      setConsentError(null);
+      qc.invalidateQueries({ queryKey: ['agent-runtime-session', sessionId] });
     },
     onError: (err) => {
+      turnErrors.clear();
       if (turnErrors.capture(err)) return;
-      if (isNotImplemented(err)) {
-        setRuntimeUnavailable(true);
-        toast.error('Soul runtime not yet available');
+      if (isConsentError(err)) {
+        setConsentError(err instanceof YouApiError ? err.message : 'consent_required');
+      } else if (isUnavailable(err)) {
+        const secs = err instanceof YouApiError && err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
+        toast.error(`Chat provider unavailable — retrying is safe${secs ? ` (circuit breaker cooling, ~${secs}s)` : ''}`);
       } else {
         const msg = err instanceof YouApiError ? err.message : 'request failed';
         toast.error(`Turn failed — ${msg}`);
@@ -179,39 +177,23 @@ function SessionPanel({
     },
   });
 
-  const possess = useMutation({
-    mutationFn: (soulKey: string) => api.agents.possess(data?.bodyId ?? '', soulKey, uid()),
-    onSuccess: (_body, soulKey) => {
-      possessErrors.clear();
-      const soul = souls.data?.find((s: AgentSoulView) => s.soulKey === soulKey);
-      if (data) {
-        setSwap({
-          fromKey: data.soulKey,
-          fromLabel: data.soulLabel,
-          toKey: soulKey,
-          toLabel: soul?.label ?? soulKey,
-        });
-      }
-      toast.success(`Body possessed by “${soul?.label ?? soulKey}” — same Body contract`);
-      setSoulPicker('');
-      refresh();
-    },
-    onError: (err) => {
-      if (possessErrors.capture(err)) return;
-      const msg = err instanceof YouApiError ? err.message : 'request failed';
-      toast.error(`Soul swap failed — ${msg}`);
-    },
-  });
+  // P6.B8: typed error surfaces for this panel's three mutation flows.
+  // capture() runs BEFORE the toasts: 503/429 provider refusals become
+  // inline retry guidance; everything capture() declines keeps its toast.
+  // Consent (403) is never captured, so its dedicated flow stays intact.
+  const turnErrors = useApiErrorSurface('Avatar turn');
+  const endErrors = useApiErrorSurface('Session end');
 
   const endSession = useMutation({
-    mutationFn: () => api.agents.endSession(sessionId),
+    mutationFn: () => api.agentRuntime.endSession(sessionId),
     onSuccess: () => {
-      endErrors.clear();
-      toast.success('Session ended');
-      qc.invalidateQueries({ queryKey: ['agent-session', sessionId] });
+      toast.success('Session ended — turns and events are kept');
+      qc.invalidateQueries({ queryKey: ['agent-runtime-session', sessionId] });
+      qc.invalidateQueries({ queryKey: ['agent-runtime-sessions'] });
       onEnded();
     },
     onError: (err) => {
+      endErrors.clear();
       if (endErrors.capture(err)) return;
       const msg = err instanceof YouApiError ? err.message : 'request failed';
       toast.error(`End failed — ${msg}`);
@@ -232,7 +214,9 @@ function SessionPanel({
   if (session.isError) {
     return (
       <SectionCard title="Session" icon={Bot}>
-        <QueryError error={session.error} compact onRetry={() => void session.refetch()} title="Could not load session" />
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
+          <QueryError error={session.error} compact onRetry={() => void session.refetch()} title="Could not load session" />
+        </div>
       </SectionCard>
     );
   }
@@ -240,7 +224,7 @@ function SessionPanel({
   return (
     <SectionCard
       title="Session"
-      description={data ? `${data.bodyName} · possessed by ${data.soulLabel}` : undefined}
+      description={data ? `${data.bodyName} v${data.bodyVersion} · ${data.soulName} v${data.soulVersion}` : undefined}
       icon={Bot}
       actions={
         <>
@@ -250,15 +234,16 @@ function SessionPanel({
           {live ? (
             <AlertDialog open={endOpen} onOpenChange={setEndOpen}>
               <AlertDialogTrigger asChild>
-                <Button size="sm" variant="outline" className="h-11 gap-1.5 text-red-700 hover:text-red-700 sm:h-8 dark:text-red-400 dark:hover:text-red-400">
+                <Button size="sm" variant="outline" className="gap-1.5 text-red-700 hover:text-red-700 dark:text-red-400 dark:hover:text-red-400">
                   <StopCircle className="size-3.5" aria-hidden /> End
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>End this avatar session?</AlertDialogTitle>
+                  <AlertDialogTitle>End this agent session?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Turns and performance events recorded so far are kept; the avatar becomes unavailable.
+                    Teardown is explicit: turns, events and provenance recorded so far are kept; the avatar becomes
+                    unavailable. The bound Body and Soul stay untouched.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -274,89 +259,34 @@ function SessionPanel({
               </AlertDialogContent>
             </AlertDialog>
           ) : null}
+          {/* P6.B8 — session-end flow errors: typed 503/429 refusals render
+              inline retry guidance instead of a bare toast. */}
+          <ApiErrorSurface surface={endErrors} onRetry={() => endSession.mutate()} retrying={endSession.isPending} />
         </>
       }
     >
       {data ? (
         <div className="space-y-4">
-          {/* P6.B8 — session-end flow errors: typed 503/429 refusals render
-              inline retry guidance instead of a bare toast. */}
-          <ApiErrorSurface surface={endErrors} onRetry={() => endSession.mutate()} retrying={endSession.isPending} />
-
           {/* session header */}
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusBadge status={data.status} />
             <Badge variant="outline" className="gap-1 font-mono text-[10px]">
-              <Lock className="size-2.5" aria-hidden /> body: {data.bodyName}
+              <Lock className="size-2.5" aria-hidden /> body: {data.bodyName} v{data.bodyVersion}
             </Badge>
-            <Badge variant="outline" className="font-mono text-[10px]">soul: {data.soulKey}</Badge>
-            <Badge variant="outline" className="text-[10px]">{ROUTING_LABEL[data.routingClass]}</Badge>
-            {data.twinId ? (
-              data.twinDisplayName
-                ? <Badge variant="outline" className="text-[10px]">twin: {data.twinDisplayName}</Badge>
-                : <IdChip id={data.twinId} label="twin" />
+            <Badge variant="outline" className="font-mono text-[10px]">soul: {data.soulName} v{data.soulVersion}</Badge>
+            <Badge variant="outline" className="text-[10px]">twin: {data.twinDisplayName}</Badge>
+            {data.consentGrantId ? (
+              <Badge variant="outline" className="gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+                <ShieldAlert className="size-2.5" aria-hidden /> consent {data.consentGrantId.slice(0, 10)}…
+              </Badge>
             ) : null}
+            <Badge variant="outline" className="gap-1 font-mono text-[10px]">
+              <Dices className="size-2.5" aria-hidden /> seed {data.seed}
+            </Badge>
             <IdChip id={data.id} label="session" />
           </div>
 
           <AvatarStage state={state} stateAt={at} recentEvents={events} ended={!live} />
-
-          {/* soul swap */}
-          {live ? (
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Ghost className="size-3.5 text-muted-foreground" aria-hidden />
-                <span className="text-xs font-medium">Soul swap</span>
-                <span className="text-[11px] text-muted-foreground">mid-session — the Body contract never changes</span>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Select value={soulPicker || undefined} onValueChange={(v) => setSoulPicker(v)}>
-                  <SelectTrigger
-                    aria-label="Possess with another Soul"
-                    className="data-[size=default]:h-11 w-full min-w-44 flex-1 sm:data-[size=default]:h-9 sm:w-56"
-                  >
-                    <SelectValue placeholder={possess.isPending ? 'Possessing…' : 'Possess with another Soul'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {souls.data?.filter((s: AgentSoulView) => s.soulKey !== data.soulKey).map((s: AgentSoulView) => (
-                      <SelectItem key={s.soulKey} value={s.soulKey}>
-                        {s.label} · {ROUTING_LABEL[s.routingClass]}
-                      </SelectItem>
-                    )) ?? null}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm" className="h-11 gap-1.5 sm:h-8" disabled={!soulPicker || possess.isPending}
-                  onClick={() => soulPicker && possess.mutate(soulPicker)}
-                >
-                  {possess.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Ghost className="size-3.5" aria-hidden />}
-                  Swap
-                </Button>
-              </div>
-              {/* P6.B8 — soul-swap flow errors; retry re-mutates the picked soul. */}
-              <ApiErrorSurface
-                surface={possessErrors}
-                onRetry={() => { if (soulPicker) possess.mutate(soulPicker); }}
-                retrying={possess.isPending}
-                className="mt-2"
-              />
-              {swap ? (
-                <div className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <Badge variant="outline" className="gap-1 font-mono text-[10px]">
-                      <Lock className="size-2.5" aria-hidden /> {data.bodyName} — unchanged
-                    </Badge>
-                    <Badge variant="outline" className="font-mono text-[10px] line-through opacity-60">{swap.fromKey}</Badge>
-                    <ArrowRight className="size-3 text-muted-foreground" aria-hidden />
-                    <Badge variant="outline" className="border-emerald-500/40 font-mono text-[10px] text-emerald-700 dark:text-emerald-400">{swap.toKey}</Badge>
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-emerald-800 dark:text-emerald-300">
-                    Same Body contract — Soul swapped. New turns are recorded under “{swap.toLabel}”.
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
 
           {/* chat */}
           <div>
@@ -365,29 +295,7 @@ function SessionPanel({
             </div>
             <div className="you-scroll max-h-80 space-y-2.5 overflow-y-auto rounded-lg border bg-muted/20 p-3">
               {data.turns.length ? (
-                data.turns.map((turn) => (
-                  <div key={turn.id} className={cn('flex flex-col', turn.role === 'user' ? 'items-end' : 'items-start')}>
-                    <div
-                      className={cn(
-                        'max-w-[88%] rounded-xl px-3 py-2 text-sm',
-                        turn.role === 'user'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'border bg-card text-card-foreground',
-                      )}
-                    >
-                      {turn.content}
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-2 px-1 font-mono text-[10px] text-muted-foreground">
-                      <span>{new Date(turn.createdAt).toLocaleTimeString()}</span>
-                      {turn.role === 'agent' && turn.latencyMs != null ? (
-                        <span className="you-num">{Math.round(turn.latencyMs)} ms</span>
-                      ) : null}
-                      {turn.role === 'agent' && turn.states?.length ? (
-                        <span>{turn.states.length} state events</span>
-                      ) : null}
-                    </div>
-                  </div>
-                ))
+                data.turns.map((turn) => <TurnBubble key={turn.id} turn={turn} />)
               ) : (
                 <p className="py-6 text-center text-xs text-muted-foreground">
                   No turns yet — send the first message to drive the avatar.
@@ -405,20 +313,21 @@ function SessionPanel({
               <div ref={chatEndRef} />
             </div>
 
-            {runtimeUnavailable ? (
-              <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-300">
-                <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                <span>
-                  Soul runtime not yet available — the backend returned not-implemented for this session. Turns are
-                  recorded once the runtime lands; nothing is simulated here.
-                </span>
+            {consentError ? (
+              <div className="mt-2 rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <div>
+                    <div className="font-medium">Consent required</div>
+                    <p className="mt-0.5">{consentError} — consent is explicit, scoped and re-verified on every turn.</p>
+                    <button type="button" onClick={() => navigate('trust')}
+                      className="mt-1 inline-flex items-center gap-1 font-medium underline decoration-amber-500/50 underline-offset-4">
+                      Review consent grants in Trust <ChevronRight className="size-3" aria-hidden />
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
-
-            {/* P6.B8 — avatar-turn flow errors: typed 503/429 provider
-                refusals render inline retry guidance (retry re-sends the
-                drafted turn) instead of a toast-only failure. */}
-            <ApiErrorSurface surface={turnErrors} onRetry={() => sendTurn.mutate()} retrying={sendTurn.isPending} />
 
             <form
               className="mt-2 flex gap-2"
@@ -432,10 +341,10 @@ function SessionPanel({
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder={live ? 'Message the avatar…' : 'Session ended'}
                 disabled={!live || sendTurn.isPending}
-                className="h-11 sm:h-9"
+                className="h-9"
                 aria-label="Message"
               />
-              <Button type="submit" size="sm" className="h-11 gap-1.5 sm:h-8" disabled={!live || !message.trim() || sendTurn.isPending}>
+              <Button type="submit" size="sm" className="gap-1.5" disabled={!live || !message.trim() || sendTurn.isPending}>
                 {sendTurn.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Send className="size-3.5" aria-hidden />}
                 Send
               </Button>
@@ -445,7 +354,7 @@ function SessionPanel({
           {!live ? (
             <div className="flex items-center justify-between rounded-lg border border-dashed px-3 py-2.5">
               <span className="text-xs text-muted-foreground">Ended {rel(data.endedAt)}</span>
-              <Button size="sm" variant="outline" className="h-11 gap-1.5 sm:h-8" onClick={() => navigate('agent-avatars')}>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate('agent-avatars')}>
                 <Play className="size-3.5" aria-hidden /> Start a new session
               </Button>
             </div>
@@ -456,43 +365,80 @@ function SessionPanel({
   );
 }
 
-// ─── Start-session column state ──────────────────────────────────────────────
+// ─── One turn bubble (chat message + honest provenance + job state) ──────────
+function TurnBubble({ turn }: { turn: AgentRuntimeTurnView }) {
+  const failed = turn.jobStatus === 'failed' || turn.jobStatus === 'dead';
+  const pending = turnJobPending(turn);
+  return (
+    <div className={cn('flex flex-col', turn.role === 'user' ? 'items-end' : 'items-start')}>
+      <div
+        className={cn(
+          'max-w-[88%] rounded-xl px-3 py-2 text-sm',
+          turn.role === 'user'
+            ? 'bg-primary text-primary-foreground'
+            : 'border bg-card text-card-foreground',
+        )}
+      >
+        {turn.content}
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-2 px-1 font-mono text-[10px] text-muted-foreground">
+        <span>{new Date(turn.createdAt).toLocaleTimeString()}</span>
+        {turn.role === 'agent' && turn.latencyMs != null ? (
+          <span className="you-num">{Math.round(turn.latencyMs)} ms</span>
+        ) : null}
+        {turn.role === 'agent' && turn.model ? <span>{turn.model}</span> : null}
+        {turn.role === 'agent' && turn.seed != null ? (
+          <span className="inline-flex items-center gap-0.5"><Dices className="size-2.5" aria-hidden /> seed {turn.seed}</span>
+        ) : null}
+        {turn.role === 'agent' && turn.states?.length ? (
+          <span>{turn.states.length} state events</span>
+        ) : null}
+        {pending ? (
+          <span className="you-pulse inline-flex items-center gap-1 text-sky-700 dark:text-sky-400">
+            <Loader2 className="size-2.5 animate-spin" aria-hidden /> turn job {turn.jobStatus}
+          </span>
+        ) : null}
+      </div>
+      {failed && turn.jobError ? (
+        <div className="mt-1 max-w-[88%] rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-700 dark:text-red-400">
+          <span className="font-medium">Turn {turn.jobStatus === 'dead' ? 'dead-lettered' : 'failed'} — </span>
+          <span className="font-mono">{turn.jobError.slice(0, 220)}{turn.jobError.length > 220 ? '…' : ''}</span>
+          <div className="mt-0.5 text-red-600/80 dark:text-red-400/80">
+            Bounded retries were spent before this outcome; the message is preserved. Dead-lettered turns are
+            inspectable by operators in Maintenance → dead jobs.
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── Start-session column ────────────────────────────────────────────────────
 function StartSessionCard({
-  bodies, souls, twins, onStarted, bodiesPending, soulsPending,
+  bodies, souls, onStarted,
 }: {
-  bodies: AgentBodyView[];
-  souls: AgentSoulView[];
-  twins: { id: string; displayName: string }[];
+  bodies: AgentRuntimeBodyView[];
+  souls: AgentRuntimeSoulView[];
   onStarted: (sessionId: string) => void;
-  bodiesPending: boolean;
-  soulsPending: boolean;
 }) {
   const qc = useQueryClient();
   const navigate = useYouStore((s) => s.navigate);
   const [bodyId, setBodyId] = useState('');
-  const [soulKey, setSoulKey] = useState('');
-  const [twinId, setTwinId] = useState('none');
+  const [soulId, setSoulId] = useState('');
   const [consentError, setConsentError] = useState<string | null>(null);
 
-  // P6.B8: typed error surface for the session-start flow — 503/429
-  // refusals render inline retry guidance; consent errors are NEVER captured
-  // (taxonomy maps them to consent/auth classes), so that flow stays intact.
-  const startErrors = useApiErrorSurface('Session start');
+  const activeBodies = bodies.filter((b) => b.status === 'active');
+  const activeSouls = souls.filter((s) => s.status === 'active');
+
   const start = useMutation({
-    mutationFn: () =>
-      api.agents.startSession(
-        { bodyId, soulKey, ...(twinId !== 'none' ? { twinId } : {}) },
-        uid(),
-      ),
+    mutationFn: () => api.agentRuntime.createSession({ bodyId, soulId }, uid()),
     onSuccess: (session) => {
-      startErrors.clear();
       setConsentError(null);
-      toast.success(`Session started — ${session.bodyName} possessed by ${session.soulLabel}`);
-      qc.invalidateQueries({ queryKey: ['agent-bodies'] });
+      toast.success(`Session started — ${session.bodyName} × ${session.soulName} for twin ${session.twinDisplayName}`);
+      qc.invalidateQueries({ queryKey: ['agent-runtime-sessions'] });
       onStarted(session.id);
     },
     onError: (err) => {
-      if (startErrors.capture(err)) return;
       if (isConsentError(err)) {
         setConsentError(err instanceof YouApiError ? err.message : 'consent_required');
       } else {
@@ -502,65 +448,71 @@ function StartSessionCard({
     },
   });
 
-  // derive effective selections from loaded catalogs (no effects needed)
-  const effectiveBodyId = bodies.some((b) => b.id === bodyId) ? bodyId : '';
-  const effectiveSoulKey = souls.some((s) => s.soulKey === soulKey) ? soulKey : '';
+  // derive effective selections from loaded lists (no effects needed)
+  const effectiveBodyId = activeBodies.some((b) => b.id === bodyId) ? bodyId : '';
+  const effectiveSoulId = activeSouls.some((s) => s.id === soulId) ? soulId : '';
+  const canStart = !!effectiveBodyId && !!effectiveSoulId && !start.isPending;
 
-  const canStart = !!effectiveBodyId && !!effectiveSoulKey && !start.isPending;
+  const chosenSoul = activeSouls.find((s) => s.id === effectiveSoulId);
 
   return (
     <>
-      <SectionCard title="Start session" description="Pick a Body, bind a Soul, optionally embody a twin." icon={Play}>
+      <SectionCard
+        title="Start session"
+        description="Bind a Body and a Soul — the session’s twin comes from the Soul and must match the Body’s visual binding."
+        icon={Play}
+      >
         <div className="space-y-3.5">
           <div className="space-y-1.5">
-            <Label className="text-xs">Body <span className="text-muted-foreground">(capability contract)</span></Label>
+            <Label className="text-xs">Body <span className="text-muted-foreground">(active only)</span></Label>
             <Select value={effectiveBodyId || undefined} onValueChange={setBodyId}>
-              <SelectTrigger aria-label="Select body" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue placeholder={bodiesPending ? 'Loading bodies…' : bodies.length ? 'Select body' : 'No bodies yet'} /></SelectTrigger>
+              <SelectTrigger className="h-9"><SelectValue placeholder={activeBodies.length ? 'Select body' : 'No active bodies'} /></SelectTrigger>
               <SelectContent>
-                {bodies.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>{b.name} · {b.role}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Soul <span className="text-muted-foreground">(runtime binding)</span></Label>
-            <Select value={effectiveSoulKey || undefined} onValueChange={setSoulKey}>
-              <SelectTrigger aria-label="Select soul" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue placeholder={soulsPending ? 'Loading souls…' : souls.length ? 'Select soul' : 'No souls in catalog'} /></SelectTrigger>
-              <SelectContent>
-                {souls.map((s) => (
-                  <SelectItem key={s.soulKey} value={s.soulKey}>
-                    {s.label} · {ROUTING_LABEL[s.routingClass]}
+                {activeBodies.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name} · {b.role}{b.twinDisplayName ? ` · ${b.twinDisplayName}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Twin (optional)</Label>
-            <Select value={twinId} onValueChange={setTwinId}>
-              <SelectTrigger aria-label="Select twin" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None — abstract avatar</SelectItem>
-                {twins.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {twinId !== 'none' ? (
-              <p className="flex items-start gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-300">
-                <ShieldAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
-                Embodiment scope required — attaching a twin means the avatar drives that twin’s representation. The
-                subject’s consent grant must include the <span className="font-mono">embodiment</span> scope.
+            {bodies.length > 0 && activeBodies.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Bodies exist but none are active — activate one from the list (lifecycle is explicit).
               </p>
             ) : null}
           </div>
-          <Button className="h-11 w-full gap-1.5 sm:h-9" disabled={!canStart} onClick={() => start.mutate()}>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Soul <span className="text-muted-foreground">(active only)</span></Label>
+            <Select value={effectiveSoulId || undefined} onValueChange={setSoulId}>
+              <SelectTrigger className="h-9"><SelectValue placeholder={activeSouls.length ? 'Select soul' : 'No active souls'} /></SelectTrigger>
+              <SelectContent>
+                {activeSouls.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name} · {s.twinDisplayName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {souls.length > 0 && activeSouls.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Souls exist but none are active — activate one from the list.
+              </p>
+            ) : null}
+          </div>
+          {chosenSoul ? (
+            <p className="flex items-start gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+              <ShieldAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
+              Embodiment scope required — the session binds twin <span className="font-medium">{chosenSoul.twinDisplayName}</span>;
+              the subject’s consent grant must include <span className="font-mono">embodiment</span> (server-enforced, re-verified per turn).
+            </p>
+          ) : null}
+          <Button className="w-full gap-1.5" disabled={!canStart} onClick={() => start.mutate()}>
             {start.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
             Start session
           </Button>
-          {/* P6.B8 — session-start flow errors; retry re-attempts the same pick. */}
-          <ApiErrorSurface surface={startErrors} onRetry={() => start.mutate()} retrying={start.isPending} />
+          {bodies.length === 0 || souls.length === 0 ? (
+            <p className="border-t pt-3 text-[11px] text-muted-foreground">
+              Create a Body{souls.length === 0 ? ' and a Soul' : ''} above first — sessions need one active Body and one active Soul.
+            </p>
+          ) : null}
         </div>
       </SectionCard>
 
@@ -577,7 +529,7 @@ function StartSessionCard({
               <button
                 type="button"
                 onClick={() => navigate('trust')}
-                className="you-focus inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline decoration-amber-500/50 underline-offset-4 transition-colors hover:decoration-amber-600 dark:text-amber-200"
+                className="inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline decoration-amber-500/50 underline-offset-4 transition-colors hover:decoration-amber-600 dark:text-amber-200"
               >
                 Review consent grants in Trust <ChevronRight className="size-3" aria-hidden />
               </button>
@@ -585,7 +537,6 @@ function StartSessionCard({
           </div>
         </div>
       ) : null}
-
     </>
   );
 }
@@ -593,37 +544,23 @@ function StartSessionCard({
 // ─── View ────────────────────────────────────────────────────────────────────
 export function AgentAvatarsView() {
   const [activeId, setActiveId] = useState<string | null>(null);
-  // knownSessions accumulated via ref below
 
-  const bodies = useQuery({ queryKey: ['agent-bodies'], queryFn: () => api.agents.bodies() });
-  const souls = useQuery({ queryKey: ['agent-souls'], queryFn: () => api.agents.souls() });
-  const twins = useQuery({ queryKey: ['twins'], queryFn: () => api.twins.list() });
-  const session = useQuery({
-    queryKey: ['agent-session', activeId],
-    queryFn: () => api.agents.getSession(activeId as string),
-    enabled: !!activeId,
-  });
+  const bodies = useQuery({ queryKey: ['agent-runtime-bodies'], queryFn: () => api.agentRuntime.bodies() });
+  const souls = useQuery({ queryKey: ['agent-runtime-souls'], queryFn: () => api.agentRuntime.souls() });
+  const sessions = useQuery({ queryKey: ['agent-runtime-sessions'], queryFn: () => api.agentRuntime.sessions() });
 
-  // track every session we have real data for (for the history list) by
-  // reading the query cache — every fetched session lives under
-  // ['agent-session', id]. Read-only cache access keeps this compiler-safe.
-  const qc = useQueryClient();
-  const knownSessions = useMemo(
-    () => qc
-      .getQueriesData<AgentAvatarSessionView>({ queryKey: ['agent-session'] })
-      .map(([, d]) => d)
-      .filter((d): d is AgentAvatarSessionView => !!d),
-    [qc, session.data],
+  // keep the session list fresh when a session view exists (turn counts)
+  const sessionList = useMemo<AgentRuntimeSessionSummaryView[]>(
+    () => sessions.data ?? [],
+    [sessions.data],
   );
-
-  const history = useSessionHistory(knownSessions);
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Embodiment"
         title="Agent Avatars"
-        description="AI-provider embodiment: a Body is reusable capability/role/tool infrastructure; a Soul is an LLM/VLM/runtime binding. Bodies stay identical while Souls swap — the LLM is never the renderer (ARCHITECTURE §8)."
+        description="The production Body/Soul runtime: a Body binds visual avatar assets to a TwinVersion and declares what it CAN and CANNOT do; a Soul is twin-bound personality with versioned, seed-recorded behavior; sessions bind (Twin, Body, Soul) under consent and run turns through the resilience stack."
       />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)]">
@@ -637,133 +574,145 @@ export function AgentAvatarsView() {
           {bodies.isPending ? (
             <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
           ) : bodies.isError ? (
-            <QueryError error={bodies.error} compact onRetry={() => void bodies.refetch()} title="Could not load bodies" />
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
+              <span>Couldn’t load bodies — {bodies.error instanceof YouApiError ? bodies.error.message : 'request failed'}</span>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => bodies.refetch()}>Retry</Button>
+            </div>
           ) : !bodies.data?.length ? (
             <EmptyState
               icon={Bot}
               title="No Bodies yet"
-              hint="A Body is a reusable role/capability/tool contract — create one with “New Body”, then bind any Soul to it."
+              hint="A Body binds a twin’s visual assets (TwinVersion) and declares an honest capability manifest. Create one, activate it, then bind any Soul."
             />
           ) : (
             <div className="you-scroll max-h-[560px] space-y-2.5 overflow-y-auto">
-              {bodies.data.map((b) => {
-                const inSession = !!activeId && session.data?.bodyId === b.id && session.data?.status === 'live';
-                return (
-                  <div
-                    key={b.id}
-                    className={cn(
-                      'rounded-lg border bg-card p-3 transition-colors',
-                      inSession && 'border-emerald-500/40 ring-1 ring-emerald-500/20',
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-medium">{b.name}</span>
-                          <span className="you-num font-mono text-[10px] text-muted-foreground">v{b.version}</span>
-                        </div>
-                        <Badge variant="outline" className="mt-1 text-[10px]">{b.role}</Badge>
+              {bodies.data.map((b) => (
+                <div key={b.id} className="rounded-lg border bg-card p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium">{b.name}</span>
+                        <span className="you-num font-mono text-[10px] text-muted-foreground">v{b.version}</span>
                       </div>
-                      {inSession ? <StatusBadge status="live" /> : null}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {b.capabilities.slice(0, 4).map((c) => (
-                        <Badge key={c} variant="outline" className="font-mono text-[9px] text-muted-foreground">{c}</Badge>
-                      ))}
-                      {b.capabilities.length > 4 ? (
-                        <Badge variant="outline" className="font-mono text-[9px] text-muted-foreground">+{b.capabilities.length - 4}</Badge>
-                      ) : null}
-                    </div>
-                    {b.tools.length ? (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {b.tools.slice(0, 3).map((t) => (
-                          <span key={t} className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 font-mono text-[9px] text-muted-foreground">
-                            <Wrench className="size-2.5" aria-hidden />{t}
-                          </span>
-                        ))}
-                        {b.tools.length > 3 ? (
-                          <span className="font-mono text-[9px] text-muted-foreground">+{b.tools.length - 3} tools</span>
-                        ) : null}
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <Badge variant="outline" className="text-[10px]">{b.role}</Badge>
+                        {b.twinDisplayName ? (
+                          <Badge variant="outline" className="gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+                            <Lock className="size-2.5" aria-hidden /> twin: {b.twinDisplayName}
+                            {b.twinVersionNumber != null ? ` v${b.twinVersionNumber}` : ''}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">abstract</Badge>
+                        )}
                       </div>
-                    ) : null}
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
-                      <span className="text-[10px] text-muted-foreground">possessed by:</span>
-                      {b.possessions?.length ? (
-                        b.possessions.slice(-3).map((s) => (
-                          <Badge key={s.id} variant="outline" className="max-w-32 truncate font-mono text-[9px]">{s.soulKey}</Badge>
-                        ))
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground">never</span>
-                      )}
                     </div>
-                    <div className="mt-1.5"><IdChip id={b.id} label="body" /></div>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <StatusBadge status={b.status} />
+                      <LifecycleButtons kind="body" id={b.id} status={b.status} />
+                    </div>
                   </div>
-                );
-              })}
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <span className="text-[9px] text-muted-foreground">can:</span>
+                    {b.manifest.can.length ? b.manifest.can.map((c) => (
+                      <Badge key={c} variant="outline" className="border-emerald-500/30 font-mono text-[9px] text-emerald-700 dark:text-emerald-400">{c}</Badge>
+                    )) : (
+                      <span className="font-mono text-[9px] text-muted-foreground">nothing</span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <span className="text-[9px] text-muted-foreground">cannot:</span>
+                    {b.manifest.cannot.length ? b.manifest.cannot.map((c) => (
+                      <Badge key={c} variant="outline" className="border-dashed font-mono text-[9px] text-muted-foreground line-through opacity-70">{c}</Badge>
+                    )) : (
+                      <span className="font-mono text-[9px] text-muted-foreground">nothing</span>
+                    )}
+                  </div>
+                  {b.tools.length ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {b.tools.map((t) => (
+                        <span key={t} className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 font-mono text-[9px] text-muted-foreground">
+                          <Wrench className="size-2.5" aria-hidden />{t}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 border-t pt-2"><IdChip id={b.id} label="body" /></div>
+                </div>
+              ))}
             </div>
           )}
         </SectionCard>
 
         {/* ── Souls ── */}
         <SectionCard
-          title="Soul Catalog"
-          description={`${souls.data?.length ?? 0} runtime bindings`}
+          title="Agent Souls"
+          description={`${souls.data?.length ?? 0} twin-bound personalities`}
           icon={Ghost}
+          actions={<SoulCreateDialog />}
         >
           {souls.isPending ? (
             <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
           ) : souls.isError ? (
-            <QueryError error={souls.error} compact onRetry={() => void souls.refetch()} title="Could not load souls" />
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
+              <span>Couldn’t load souls — {souls.error instanceof YouApiError ? souls.error.message : 'request failed'}</span>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => souls.refetch()}>Retry</Button>
+            </div>
           ) : !souls.data?.length ? (
             <EmptyState
               icon={Ghost}
-              title="No Souls in the catalog"
-              hint="Souls are LLM/VLM/runtime bindings registered by the soul catalog on the backend. None are registered yet."
+              title="No Souls yet"
+              hint="A Soul is personality/behavior configuration bound to a Twin — versioned, seed-recorded, reproducible. Create one and activate it."
             />
           ) : (
-            <>
-              <div className="you-scroll max-h-[560px] space-y-2.5 overflow-y-auto">
-                {souls.data.map((s) => (
-                  <div key={s.id} className="rounded-lg border bg-card p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{s.label}</div>
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={`${s.provider} · ${s.model}`}>
-                          {s.provider} · {s.model}
-                        </div>
+            <div className="you-scroll max-h-[560px] space-y-2.5 overflow-y-auto">
+              {souls.data.map((s) => (
+                <div key={s.id} className="rounded-lg border bg-card p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium">{s.name}</span>
+                        <span className="you-num font-mono text-[10px] text-muted-foreground">v{s.version}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <Badge variant="outline" className="gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+                          <Lock className="size-2.5" aria-hidden /> twin: {s.twinDisplayName}
+                        </Badge>
+                        <Badge variant="outline" className="font-mono text-[10px]">{s.provider} · {s.model}</Badge>
                       </div>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-1">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          'text-[9px]',
-                          s.routingClass === 'system_one'
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                            : 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-400',
-                        )}
-                      >
-                        {ROUTING_LABEL[s.routingClass]}
-                      </Badge>
-                      {typeof s.params.thinking === 'boolean' ? (
-                        <Badge variant="outline" className="gap-1 text-[9px]">
-                          <Brain className="size-2.5" aria-hidden /> thinking {s.params.thinking ? 'on' : 'off'}
-                        </Badge>
-                      ) : null}
-                      {typeof s.params.temperature === 'number' ? (
-                        <span className="you-num font-mono text-[10px] text-muted-foreground">temp {s.params.temperature}</span>
-                      ) : null}
+                    <div className="flex flex-col items-end gap-1.5">
+                      <StatusBadge status={s.status} />
+                      <LifecycleButtons kind="soul" id={s.id} status={s.status} />
                     </div>
-                    <div className="mt-1.5 font-mono text-[10px] text-muted-foreground">{s.soulKey}</div>
                   </div>
-                ))}
-              </div>
-              <p className="mt-3 border-t pt-3 text-[11px] leading-relaxed text-muted-foreground">
-                <span className="font-mono">system_one</span> / <span className="font-mono">system_two</span> are
-                routing classes — fast vs deliberative profiles — not provider identities. Any Soul can possess any
-                Body without changing the Body’s contract.
-              </p>
-            </>
+                  {s.persona.tagline ? (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">“{s.persona.tagline}”</p>
+                  ) : null}
+                  {s.persona.traits.length ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {s.persona.traits.slice(0, 5).map((t) => (
+                        <Badge key={t} variant="outline" className="text-[9px]">{t}</Badge>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] text-muted-foreground">can:</span>
+                    {s.manifest.can.length ? s.manifest.can.map((c) => (
+                      <Badge key={c} variant="outline" className="border-emerald-500/30 font-mono text-[9px] text-emerald-700 dark:text-emerald-400">{c}</Badge>
+                    )) : <span className="font-mono text-[9px] text-muted-foreground">nothing</span>}
+                    {s.manifest.cannot.length ? (
+                      <span className="text-[9px] text-muted-foreground">· cannot: {s.manifest.cannot.join(', ')}</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-0.5"><Dices className="size-2.5" aria-hidden /> seed {s.seed}</span>
+                    {typeof s.params.thinking === 'boolean' ? <span>thinking {s.params.thinking ? 'on' : 'off'}</span> : null}
+                    {typeof s.params.temperature === 'number' ? <span>temp {s.params.temperature}</span> : <span>temp seeded/turn</span>}
+                  </div>
+                  <div className="mt-2 border-t pt-2"><IdChip id={s.id} label="soul" /></div>
+                </div>
+              ))}
+            </div>
           )}
         </SectionCard>
 
@@ -774,35 +723,36 @@ export function AgentAvatarsView() {
           <StartSessionCard
             bodies={bodies.data ?? []}
             souls={souls.data ?? []}
-            twins={twins.data?.map((t) => ({ id: t.id, displayName: t.displayName })) ?? []}
-            bodiesPending={bodies.isPending}
-            soulsPending={souls.isPending}
             onStarted={setActiveId}
           />
         )}
       </div>
 
-      {/* ── Session history ── */}
+      {/* ── Session history (real list endpoint) ── */}
       <SectionCard
         title="Session history"
-        description="Sessions started in this window, plus sessions discovered from the tenant event log."
+        description="Sessions bound in this tenant (newest first) — from the runtime’s list endpoint, nothing reconstructed."
         icon={History}
       >
-        {history.isRecovering && !history.sessions.length ? (
+        {sessions.isPending ? (
           <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-        ) : history.eventsError && !history.sessions.length ? (
-          <QueryError error={history.eventsError} compact onRetry={history.refetchEvents} title="Could not load session history" />
-        ) : !history.sessions.length ? (
+        ) : sessions.isError ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
+            <span>Couldn’t load sessions — {sessions.error instanceof YouApiError ? sessions.error.message : 'request failed'}</span>
+            <Button size="sm" variant="outline" className="h-7" onClick={() => sessions.refetch()}>Retry</Button>
+          </div>
+        ) : !sessionList.length ? (
           <EmptyState
             icon={History}
-            title="No avatar sessions yet"
-            hint="Start a session above — the history list is assembled from real sessions only (API v1 has no list-sessions endpoint; history is recovered from events)."
+            title="No agent sessions yet"
+            hint="Start a session above — every session binds (Twin, Body, Soul) with consent provenance and records real turn history."
           />
         ) : (
-          <div className="max-h-72 you-scroll overflow-auto rounded-lg border">
-            <table className="w-full min-w-[640px] text-sm">
+          <div className="max-h-72 you-scroll overflow-y-auto rounded-lg border">
+            <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">Twin</th>
                   <th className="px-3 py-2 font-medium">Body</th>
                   <th className="px-3 py-2 font-medium">Soul</th>
                   <th className="px-3 py-2 font-medium">Status</th>
@@ -812,12 +762,17 @@ export function AgentAvatarsView() {
                 </tr>
               </thead>
               <tbody>
-                {history.sessions.map((s) => (
+                {sessionList.map((s) => (
                   <tr key={s.id} className="border-b last:border-0">
-                    <td className="max-w-32 truncate px-3 py-2 font-medium">{s.bodyName}</td>
-                    <td className="max-w-32 truncate px-3 py-2 font-mono text-xs text-muted-foreground">{s.soulKey}</td>
+                    <td className="max-w-28 truncate px-3 py-2 font-medium">{s.twinDisplayName}</td>
+                    <td className="max-w-28 truncate px-3 py-2 text-xs">
+                      {s.bodyName} <span className="font-mono text-[10px] text-muted-foreground">v{s.bodyVersion}</span>
+                    </td>
+                    <td className="max-w-28 truncate px-3 py-2 text-xs">
+                      {s.soulName} <span className="font-mono text-[10px] text-muted-foreground">v{s.soulVersion}</span>
+                    </td>
                     <td className="px-3 py-2"><StatusBadge status={s.status} /></td>
-                    <td className="you-num px-3 py-2 text-right font-mono text-xs">{s.turns.length}</td>
+                    <td className="you-num px-3 py-2 text-right font-mono text-xs">{s.turnCount}</td>
                     <td className="px-3 py-2 text-right text-xs text-muted-foreground">{rel(s.createdAt)}</td>
                     <td className="px-3 py-2 text-right">
                       <Button

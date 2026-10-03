@@ -41,6 +41,52 @@ paths:
     get:
       summary: Agent souls
       responses: {"200": {"description": "OK"}}
+  /agent/bodies:
+    get:
+      summary: Agent runtime bodies (P6.C6 production runtime)
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Agent runtime bodies — create (draft; activate via PATCH)
+      responses: {"201": {"description": "Created"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /agent/bodies/{id}:
+    get:
+      summary: Agent runtime bodies item (with immutable version snapshots)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+    patch:
+      summary: Agent runtime bodies — lifecycle action or versioned definition update
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /agent/souls:
+    get:
+      summary: Agent runtime souls (P6.C6 production runtime)
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Agent runtime souls — create (draft; activate via PATCH)
+      responses: {"201": {"description": "Created"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}}
+  /agent/souls/{id}:
+    get:
+      summary: Agent runtime souls item (with immutable version snapshots)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+    patch:
+      summary: Agent runtime souls — lifecycle action or versioned definition update
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /agent/sessions:
+    get:
+      summary: Agent runtime sessions — list (newest first, bounded)
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Agent runtime sessions — bind (Twin, Body, Soul) with consent provenance
+      responses: {"201": {"description": "Created"}, "400": {"description": "Bad Request"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /agent/sessions/{id}:
+    get:
+      summary: Agent runtime sessions item — real turn history with honest job-status join
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+    delete:
+      summary: Agent runtime sessions — explicit teardown (live → ended; idempotent)
+      responses: {"204": {"description": "No Content"}, "404": {"description": "Not Found"}}
+  /agent/sessions/{id}/turns:
+    post:
+      summary: Agent runtime sessions — submit a chat turn (durable agent.turn job; consent re-verified)
+      responses: {"202": {"description": "Accepted"}, "400": {"description": "Bad Request"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}, "503": {"description": "Service Unavailable"}}
   /api-keys:
     get:
       summary: API keys
