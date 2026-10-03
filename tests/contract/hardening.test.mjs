@@ -451,7 +451,8 @@ test('F-04: webhook delivery carries a verifiable HMAC signature over timestamp 
     });
     assert.equal(trigger.status, 201, `grant create → ${trigger.status}`);
 
-    // 5) wait for the delivery (single attempt, 5s timeout — no retry scheduler)
+    // 5) wait for the delivery (P6.A6: deliveries retry with backoff; the
+    //    listener returns 200 so the first attempt succeeds here)
     const deadline = Date.now() + 15000;
     let record = null;
     while (Date.now() < deadline) {

@@ -39,10 +39,20 @@ const SERVICE = 's3';
 /** Read + validate the R2 env contract. Throws with the missing var names. */
 export function r2Config(): R2Config {
   const missing: string[] = [];
-  const accountId = process.env.YOU_R2_ACCOUNT_ID?.trim() || missing.push('YOU_R2_ACCOUNT_ID') && '';
-  const accessKeyId = process.env.YOU_R2_ACCESS_KEY_ID?.trim() || missing.push('YOU_R2_ACCESS_KEY_ID') && '';
-  const secretAccessKey = process.env.YOU_R2_SECRET_ACCESS_KEY?.trim() || missing.push('YOU_R2_SECRET_ACCESS_KEY') && '';
-  const bucket = process.env.YOU_R2_BUCKET?.trim() || missing.push('YOU_R2_BUCKET') && '';
+  // (P6.A6 tsc-gate repair, pre-existing at base: the old `|| missing.push(x) && ''`
+  // chains typed as `string | 0` — same behavior, now type-clean.)
+  const required = (name: string): string => {
+    const value = process.env[name]?.trim();
+    if (!value) {
+      missing.push(name);
+      return '';
+    }
+    return value;
+  };
+  const accountId = required('YOU_R2_ACCOUNT_ID');
+  const accessKeyId = required('YOU_R2_ACCESS_KEY_ID');
+  const secretAccessKey = required('YOU_R2_SECRET_ACCESS_KEY');
+  const bucket = required('YOU_R2_BUCKET');
   if (missing.length) {
     throw new Error(
       `R2 backend is not configured — missing ${missing.join(', ')} (YOU_STORAGE_BACKEND=r2 requires all four; refusing to guess where bytes live)`,

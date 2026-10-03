@@ -17,12 +17,24 @@
 // NOTE (G-7 fix, 2026-10-01): tests/contract/storage-db.test.mjs is
 // DELIBERATELY NOT imported here — it asserts the YOU_STORAGE_BACKEND=db
 // object store and therefore always boots its OWN server with that env
-// override (the aggregate shares one fs-backend server). The full station
-// gate is BOTH commands, in order:
+// override (the aggregate shares one fs-backend server).
+//
+// NOTE (P6.A6, same law): tests/contract/resilience.test.mjs is ALSO
+// deliberately standalone — it boots its OWN server with the resilience
+// knobs set FAST (retry/breaker/dead-letter env) plus its own throwaway
+// SQLite database, a local mock OpenRouter and a webhook listener; sharing
+// the aggregate's server would mean testing the default (slow) knobs and
+// polluting the shared fixture with dead jobs. The full station gate is
+// ALL THREE commands, in order:
 //   node --test tests/            (aggregated, fs backend — the default path)
 //   node --test tests/contract/storage-db.test.mjs   (standalone, db backend)
+//   node --test tests/contract/resilience.test.mjs   (standalone, resilience env)
 import './contract/smoke.test.mjs';
 import './contract/verification-flow.test.mjs';
 import './contract/hardening.test.mjs';
+// P6.A6 — pure resilience unit tests (import-free core modules via Node's
+// type stripping): bounded retries, circuit breaker, counters. No server,
+// no DB, no network — safe to aggregate.
+import './contract/resilience-unit.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

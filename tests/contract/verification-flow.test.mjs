@@ -72,8 +72,10 @@ async function pollJob(jobId, timeoutMs = 180000) {
     const r = await call(`/api/v1/jobs/${jobId}`);
     assert.equal(r.status, 200, `job poll GET /api/v1/jobs/${jobId} → ${r.status}`);
     const j = r.json;
-    assert.ok(['queued', 'provisioning', 'running', 'collecting', 'succeeded', 'failed'].includes(j.status), `unknown job status ${j.status}`);
-    if (j.status === 'succeeded' || j.status === 'failed') return j;
+    assert.ok(['queued', 'provisioning', 'running', 'collecting', 'succeeded', 'failed', 'dead'].includes(j.status), `unknown job status ${j.status}`);
+    // P6.A6: 'dead' is terminal (bounded retries exhausted) — returning it
+    // lets the caller's status assertion fail with the honest deadLetter error.
+    if (j.status === 'succeeded' || j.status === 'failed' || j.status === 'dead') return j;
     if (Date.now() - t0 > timeoutMs) {
       assert.fail(`job ${jobId} (${j.kind}) did not reach a terminal state within ${timeoutMs}ms (last: ${j.status}, progress ${j.progress})`);
     }

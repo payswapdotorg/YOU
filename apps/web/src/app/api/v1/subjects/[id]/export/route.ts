@@ -116,7 +116,9 @@ export async function GET(
       })),
       evidenceRequests: evidenceRequests.map((r) => ({
         id: r.id,
-        regions: r.regions,
+        // (P6.A6 tsc-gate repair, pre-existing at base: EvidenceRequest has no
+        // `regions` column — the capability is the honest field to export.)
+        capability: r.capability,
         status: r.status,
         createdAt: r.createdAt,
       })),

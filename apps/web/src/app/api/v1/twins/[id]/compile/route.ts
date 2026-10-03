@@ -8,9 +8,11 @@ import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
 import { requireConsent } from '@/lib/you/core/consent';
 import { handleRoute, notFound, readJsonBody, badRequest, getIdempotencyKey } from '@/lib/you/core/errors';
+import { assertProviderAvailable } from '@/lib/you/core/resilience';
 import { assertSameBodyFingerprint } from '@/lib/you/core/idempotency';
 import { createJob } from '@/lib/you/core/jobs';
 import { parseJson } from '@/lib/you/core/views';
+import { reconProviderName } from '@/lib/you/ai/recon-provider';
 import type { RenderStyle } from '@/lib/you/contracts';
 
 const RENDER_STYLES: RenderStyle[] = [
@@ -34,6 +36,12 @@ export async function POST(
 
     // server-enforced consent: reconstruction requires the reconstruct scope
     const grant = await requireConsent(auth.tenantId, twin.subjectId, 'reconstruct');
+
+    // P6.A6 graceful degraded state (the reconstruction-executor path): when
+    // the recon provider's circuit breaker is open, refuse FAST with an
+    // honest 503 + retry guidance — no queued job that hangs against a down
+    // provider, no spin. peek()-based: it never consumes the half-open probe.
+    assertProviderAvailable(reconProviderName());
 
     let captureSessionId: string | undefined;
     if (body.captureSessionId !== undefined && body.captureSessionId !== null) {

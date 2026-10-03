@@ -8,9 +8,18 @@
 //
 // Fail-closed on unknown values (same law as the storage seam): the platform
 // never guesses which provider sees biometric evidence.
+//
+// P6.A6 full (Worker A wiring, TL-sanctioned): every recon vision call now
+// routes through the platform resilience seam — the per-provider circuit
+// breaker (fail fast when the provider is down, typed ProviderUnavailableError
+// instead of a hang) wrapping bounded retries with Retry-After respect
+// (core/resilience.ts). The breaker key is the CONCRETE provider (zai /
+// openrouter), so its state is shared by every caller of this seam.
 // ═══════════════════════════════════════════════════════════════════════════
 import { visionAnalyze } from './zai';
 import { openRouterVisionAnalyze } from './openrouter';
+import { withProviderResilience } from '../core/resilience';
+import type { ProviderName } from '../core/breaker';
 
 export type ReconProvider = 'local' | 'openrouter';
 
@@ -23,14 +32,21 @@ export function reconProvider(): ReconProvider {
   );
 }
 
+/** The concrete provider name behind the recon seam (breaker key). */
+export function reconProviderName(): ProviderName {
+  return reconProvider() === 'openrouter' ? 'openrouter' : 'zai';
+}
+
 /** The single vision-analysis entry point for the recon path. */
 export async function reconVisionAnalyze(
   imageBase64DataUrl: string,
   prompt: string,
   opts: { thinking?: boolean } = {},
 ) {
-  if (reconProvider() === 'openrouter') {
-    return openRouterVisionAnalyze(imageBase64DataUrl, prompt, opts);
-  }
-  return visionAnalyze(imageBase64DataUrl, prompt, opts);
+  const provider = reconProviderName();
+  const call =
+    provider === 'openrouter'
+      ? () => openRouterVisionAnalyze(imageBase64DataUrl, prompt, opts)
+      : () => visionAnalyze(imageBase64DataUrl, prompt, opts);
+  return withProviderResilience(provider, call, { label: 'recon-vision' });
 }

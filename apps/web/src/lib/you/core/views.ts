@@ -181,6 +181,30 @@ export function jobView(j: Job): JobView {
   };
 }
 
+// P6.A6 — dead-letter inspection view (GET /api/v1/jobs/dead). The status
+// 'dead' is the lane-local DurableJobState widening (see core/jobs.ts); the
+// frozen JobView union gets the member from TL at landing.
+export interface DeadJobView extends Omit<JobView, 'status'> {
+  status: 'dead';
+  attempts: number;
+  firstAttemptAt: string | null;
+  lastAttemptAt: string | null;
+  deadAt: string | null;
+  deadLetter: Record<string, unknown>;
+}
+
+export function deadJobView(j: Job): DeadJobView {
+  return {
+    ...jobView(j),
+    status: 'dead',
+    attempts: j.attempts,
+    firstAttemptAt: j.firstAttemptAt ? iso(j.firstAttemptAt) : null,
+    lastAttemptAt: j.lastAttemptAt ? iso(j.lastAttemptAt) : null,
+    deadAt: j.deadAt ? iso(j.deadAt) : null,
+    deadLetter: parseJson<Record<string, unknown>>(j.deadLetter, {}),
+  };
+}
+
 // ─── Control plane ───────────────────────────────────────────────────────────
 
 export function eventView(e: EventRecord): EventRecordView {

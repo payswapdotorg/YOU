@@ -20,6 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { ERR } from '../contracts';
 import { HttpError } from './errors';
+import { incrCounter } from './metrics';
 
 interface Window {
   count: number;
@@ -85,6 +86,9 @@ export function enforceRateLimit(bucket: string, identity: string, rl?: RateLimi
     w.count += 1;
     if (w.count > rule.limit) {
       const retryAfterSec = Math.max(1, Math.ceil((w.resetAt - now) / 1000));
+      // P6.A6: rate-limit hits are counted for the metrics surface
+      incrCounter('ratelimit.hits');
+      incrCounter(`ratelimit.hits.${bucket}`);
       throw new HttpError(
         429,
         ERR.RATE_LIMITED,

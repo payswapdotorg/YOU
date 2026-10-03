@@ -2,19 +2,26 @@
 // YOU core — events, audit trail, webhook fan-out, usage metering (Worker A)
 // emitEvent inserts an EventRecord AND fans out WebhookDelivery rows for
 // active endpoints subscribed to the type, then attempts actual delivery in
-// the background (5s timeout; wave-1 records attempts honestly, no retry
-// scheduler). audit() writes the immutable AuditEvent compliance trail.
+// the background (5s timeout per attempt).
+//
+// P6.A6 full — bounded delivery retries: each delivery runs through the
+// shared retry helper (core/retry.ts) — network errors, 429 and 5xx retry
+// with exponential backoff + jitter; the receiver's Retry-After is honored;
+// 4xx (other) is permanent and never retried. Attempts are recorded on the
+// WebhookDelivery row either way (honest counters, no fabrication).
 //
 // W4.A F-04: every delivery is SIGNED — receivers verify
 //   X-You-Signature: sha256=HMAC-SHA256(secret, timestamp + "." + rawBody)
 //   X-You-Timestamp: <unix-seconds>
 // over the exact raw body bytes sent (see docs/API_CONTRACTS.md §Webhook
-// deliveries). The no-retry-scheduler limitation is unchanged (documented).
+// deliveries). A fresh signature is computed per attempt.
 // ═══════════════════════════════════════════════════════════════════════════
 import { createHmac } from 'crypto';
 import type { AuthContext } from './auth';
 import { db } from '@/lib/db';
 import { parseJson } from './views';
+import { retry, type RetryOptions } from './retry';
+import { incrCounter } from './metrics';
 
 export type ActorType = 'user' | 'application' | 'system' | 'job';
 
@@ -64,6 +71,51 @@ export function webhookSignature(secret: string, timestamp: string, rawBody: str
   return createHmac('sha256', secret).update(`${timestamp}.${rawBody}`, 'utf8').digest('hex');
 }
 
+/** Webhook delivery retry knobs (see .env.example). */
+export function webhookRetryEnvOptions(): Pick<RetryOptions, 'maxAttempts' | 'baseDelayMs' | 'maxDelayMs'> {
+  const num = (name: string, d: number) => {
+    const raw = process.env[name];
+    if (raw === undefined || raw === '') return d;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return d; // fail-closed safe default
+    return n;
+  };
+  return {
+    maxAttempts: num('YOU_WEBHOOK_MAX_ATTEMPTS', 5),
+    baseDelayMs: num('YOU_WEBHOOK_RETRY_BASE_DELAY_MS', 1_000),
+    maxDelayMs: num('YOU_WEBHOOK_RETRY_MAX_DELAY_MS', 30_000),
+  };
+}
+
+/** Receiver responded with a retryable status (429/5xx) — carries Retry-After when sent. */
+class WebhookRetryableStatusError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | undefined;
+  constructor(status: number, retryAfterMs: number | undefined) {
+    super(`HTTP ${status}`);
+    this.name = 'WebhookRetryableStatusError';
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.floor(seconds * 1000);
+  return undefined; // HTTP-date form is out of scope (disclosed); seconds only
+}
+
+function webhookRetryDecision(err: unknown): boolean | { retry: boolean; retryAfterMs?: number } {
+  if (err instanceof WebhookRetryableStatusError) {
+    return { retry: true, ...(err.retryAfterMs !== undefined ? { retryAfterMs: err.retryAfterMs } : {}) };
+  }
+  if (err instanceof Error && /network|econn|timeout|timed out|etimedout|socket|fetch failed|aborted/i.test(err.message)) {
+    return true;
+  }
+  return false;
+}
+
 async function deliverPending(deliveryIds: string[]): Promise<void> {
   for (const id of deliveryIds) {
     try {
@@ -82,28 +134,60 @@ async function deliverPending(deliveryIds: string[]): Promise<void> {
         createdAt: delivery.event.createdAt.toISOString(),
       });
 
+      let attemptsMade = 0;
       let outcome: { status: 'delivered' | 'failed'; error?: string };
       try {
-        // F-04: signed delivery — signature over timestamp + '.' + raw body
-        // with the endpoint's stored secret (WebhookEndpoint.secret, never
-        // exposed by the API; receivers read it from their registration flow)
-        const timestamp = Math.floor(Date.now() / 1000).toString();
-        const signature = webhookSignature(delivery.endpoint.secret, timestamp, body);
-        const res = await fetch(delivery.endpoint.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'user-agent': 'you-webhooks/1',
-            'x-you-timestamp': timestamp,
-            'x-you-signature': `sha256=${signature}`,
+        const result = await retry(
+          async (): Promise<{ ok: boolean; status: number }> => {
+            // F-04: signed delivery — signature over timestamp + '.' + raw body
+            // with the endpoint's stored secret (WebhookEndpoint.secret, never
+            // exposed by the API; receivers read it from their registration flow)
+            const timestamp = Math.floor(Date.now() / 1000).toString();
+            const signature = webhookSignature(delivery.endpoint.secret, timestamp, body);
+            const res = await fetch(delivery.endpoint.url, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'user-agent': 'you-webhooks/1',
+                'x-you-timestamp': timestamp,
+                'x-you-signature': `sha256=${signature}`,
+              },
+              body,
+              signal: AbortSignal.timeout(5000),
+            });
+            if (res.ok) return { ok: true as const, status: res.status };
+            const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'));
+            if (res.status === 429 || res.status >= 500) {
+              // retryable receiver state — bounded retries, Retry-After honored
+              throw new WebhookRetryableStatusError(res.status, retryAfterMs);
+            }
+            // other 4xx: permanent — stop honestly (no retry)
+            return { ok: false as const, status: res.status };
           },
-          body,
-          signal: AbortSignal.timeout(5000),
-        });
-        outcome = res.ok
-          ? { status: 'delivered' }
-          : { status: 'failed', error: `HTTP ${res.status}` };
+          'webhook',
+          {
+            ...webhookRetryEnvOptions(),
+            retryOn: webhookRetryDecision,
+            onAttempt: (info) => {
+              attemptsMade = info.attempt;
+              if (info.attempt > 1) {
+                incrCounter('retries');
+                incrCounter('retry.webhook');
+              }
+            },
+          },
+        );
+        if (result.ok) {
+          incrCounter('webhook.delivered');
+          outcome = { status: 'delivered' };
+        } else {
+          incrCounter('webhook.failed');
+          outcome = { status: 'failed', error: `HTTP ${result.status} (permanent — not retried)` };
+        }
       } catch (err) {
+        incrCounter('webhook.failed');
+        incrCounter('retries.exhausted');
+        incrCounter('retry.exhausted.webhook');
         outcome = { status: 'failed', error: err instanceof Error ? err.message : String(err) };
       }
 
@@ -111,7 +195,7 @@ async function deliverPending(deliveryIds: string[]): Promise<void> {
         where: { id },
         data: {
           status: outcome.status,
-          attempts: { increment: 1 },
+          attempts: { increment: Math.max(1, attemptsMade) },
           lastError: outcome.error ?? null,
         },
       });

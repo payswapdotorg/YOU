@@ -35,7 +35,9 @@ export class OpenRouterProviderError extends Error {
   readonly operation: string;
   readonly causeMessage: string;
   readonly status?: number;
-  constructor(operation: string, cause: unknown, status?: number) {
+  /** server-demanded minimum wait (Retry-After header, ms) — honored by the P6.A6 retry seam. */
+  readonly retryAfterMs?: number;
+  constructor(operation: string, cause: unknown, status?: number, retryAfterMs?: number) {
     const causeMessage =
       cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : JSON.stringify(cause);
     super(`openrouter provider error during ${operation}: ${causeMessage}`);
@@ -43,6 +45,7 @@ export class OpenRouterProviderError extends Error {
     this.operation = operation;
     this.causeMessage = causeMessage;
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -113,7 +116,15 @@ export async function openRouterVisionAnalyze(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new OpenRouterProviderError('vision.http', `HTTP ${res.status} ${body.slice(0, 300)}`, res.status);
+      // P6.A6: surface Retry-After (seconds form) so the bounded retry helper
+      // can honor the server's demand; HTTP-date form is out of scope (disclosed).
+      const retryAfterHeader = res.headers.get('retry-after');
+      const retryAfterSec = Number(retryAfterHeader);
+      const retryAfterMs =
+        retryAfterHeader !== null && Number.isFinite(retryAfterSec) && retryAfterSec >= 0
+          ? Math.floor(retryAfterSec * 1000)
+          : undefined;
+      throw new OpenRouterProviderError('vision.http', `HTTP ${res.status} ${body.slice(0, 300)}`, res.status, retryAfterMs);
     }
     const data = (await res.json()) as {
       model?: string;
