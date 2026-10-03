@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // ai-image-1 — provider image generation adapter (Worker C lane).
-// Wraps the zai image API behind a versioned, honest adapter:
+// Wraps the render provider seam (ai/render-provider.ts, P6.C2) behind a
+// versioned, honest adapter — the provider (station z-ai SDK or hosted
+// DashScope) is selected by YOU_RENDER_PROVIDER at the seam, never here:
 // - prompts are derived ONLY from consented HTIR descriptors;
 // - prompts always request a STYLIZED AVATAR PORTRAIT and never claim to be a
 //   real identity likeness (anti-impersonation policy, docs/SECURITY_PRIVACY.md);
@@ -9,7 +11,7 @@
 //   any cost number in meta is an explicitly-labeled modeled estimate.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { HTIR, RenderStyle } from '../contracts';
-import { generateImage, type ZaiImageSize } from '../ai/zai';
+import { renderGenerateImage } from '../ai/render-provider';
 import { putObject } from '../core/storage';
 
 export const AI_IMAGE_ADAPTER = {
@@ -22,7 +24,7 @@ export const AI_IMAGE_ADAPTER = {
   costNote: 'provider pricing not exposed to this sandbox — costUsd stays null; estimates in meta are modeled (costUsdModeled: true)',
 } as const;
 
-const PORTRAIT_SIZE: ZaiImageSize = '768x1344';
+const PORTRAIT_SIZE = '768x1344' as const;
 
 const STYLE_PHRASING: Record<RenderStyle, string> = {
   photorealistic: 'photorealistic digital painting style, soft studio lighting',
@@ -79,7 +81,10 @@ export interface AiImageResult {
 
 export async function renderPortraitImage(htir: HTIR, style: RenderStyle): Promise<AiImageResult> {
   const prompt = buildImagePrompt(htir, style);
-  const { base64, latencyMs } = await generateImage(prompt, PORTRAIT_SIZE);
+  // P6.C2: the ONE image-generation call site — the render provider seam
+  // resolves YOU_RENDER_PROVIDER (station | dashscope) and returns the
+  // provider-audited result (provider/model/taskId recorded in meta below).
+  const { base64, latencyMs, provider, model, taskId } = await renderGenerateImage(prompt, PORTRAIT_SIZE);
   const buf = Buffer.from(base64, 'base64');
   const stored = await putObject(buf, { kind: 'render', mime: 'image/png' });
   return {
@@ -94,6 +99,9 @@ export async function renderPortraitImage(htir: HTIR, style: RenderStyle): Promi
       adapterVersion: AI_IMAGE_ADAPTER.version,
       style,
       size: PORTRAIT_SIZE,
+      provider,
+      providerModel: model,
+      providerTaskId: taskId,
       providerLatencyMs: latencyMs,
       realLatency: true,
       costUsd: null,

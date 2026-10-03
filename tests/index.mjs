@@ -28,5 +28,8 @@ import './contract/ai-registry.test.mjs';
 // P6.A6-FULL unit suite (imported statically, runs in the aggregated gate —
 // pure unit: injected sleeps/clocks, no server boot, no network, no db)
 import './contract/resilience.test.mjs';
+// P6.C2 render-path suite (imported statically, LAST — pure unit + a local
+// 127.0.0.1 DashScope mock; injected sleeps/clocks, no app boot, no db)
+import './contract/ai-render.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
