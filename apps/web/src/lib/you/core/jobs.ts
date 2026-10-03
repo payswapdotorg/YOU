@@ -22,7 +22,7 @@ import { bumpCounter } from './metrics';
  * The value flows through Job.kind rows/views unchanged; TL should add the
  * union member at landing (see w2a-report.md compatibility notes).
  */
-export type DurableJobKind = JobKind | 'template.analyze';
+export type DurableJobKind = JobKind | 'template.analyze' | 'f1.reconstruct';
 
 /**
  * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
@@ -85,6 +85,17 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'scenes', label: 'Validate scene recipes' },
     { key: 'styles', label: 'Validate style presets' },
     { key: 'persist', label: 'Persist analysis on template' },
+  ],
+  // P6.C4 — real-human F1 reconstruction (consent-gated; fail-closed
+  // liveness/quality checkpoints; registry-resolved per-asset VLM analysis;
+  // honest F1ReconstructionReport; TwinVersion with F1 provenance)
+  'f1.reconstruct': [
+    { key: 'load', label: 'Load capture session and twin' },
+    { key: 'consent', label: 'Verify reconstruct consent (server-enforced)' },
+    { key: 'checkpoints', label: 'Liveness and quality checkpoints (fail-closed)' },
+    { key: 'analyze', label: 'Per-asset VLM analysis (registry-resolved)' },
+    { key: 'report', label: 'Aggregate F1 reconstruction report' },
+    { key: 'persist', label: 'Publish TwinVersion with F1 provenance' },
   ],
 };
 

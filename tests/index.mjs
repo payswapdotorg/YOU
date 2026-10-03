@@ -43,5 +43,12 @@ import './contract/ux-states.test.mjs';
 // server with provider-routing env overrides, same law as
 // resilience-routes.test.mjs / storage-db.test.mjs)
 import './contract/compute-broker.test.mjs';
+// P6.C4 F1-reconstruction unit suite (imported statically — pure unit over
+// the pipeline's zero-import half (lab/f1-recon.ts) composed with the real
+// AI registry (the exact resolution the recon seam performs per call):
+// consent-gated entry, liveness/quality refusal taxonomy, no-laundering
+// failure disclosure, 8-step protocol coverage aggregation, TwinVersion
+// provenance linkage, determinism; no app boot, no network, no db)
+import './contract/f1-recon.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

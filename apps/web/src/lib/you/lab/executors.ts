@@ -24,9 +24,11 @@ import type {
   RenderStyle,
   SolutionArtifactManifest,
 } from '../contracts';
-import { signStorageUrl, putObject, deleteObject, listObjectKeys } from '../core/storage';
+import { signStorageUrl, putObject, deleteObject, listObjectKeys, getObject } from '../core/storage';
 import {
   analyzeAssetQuality,
+  analyzeAssetReconstruction,
+  aggregateHtirDraft,
   analyzeEvidenceSet,
   VLM_RECON_ADAPTER,
   type VlmReconAssetInput,
@@ -35,6 +37,20 @@ import { renderPortraitSvg, SVG_PORTRAIT_ADAPTER } from '../adapters/svg-portrai
 import { renderPortraitImage, AI_IMAGE_ADAPTER, buildImagePrompt } from '../adapters/ai-image';
 import { renderPortraitVideo, AI_VIDEO_ADAPTER } from '../adapters/ai-video';
 import { chatComplete } from '../ai/zai';
+import { reconResolution } from '../ai/recon-provider';
+import {
+  F1_RECONSTRUCT_JOB_KIND,
+  F1_RECON_ADAPTER,
+  F1TypedRefusal,
+  buildF1ProvenanceBlock,
+  runF1Reconstruction,
+  type F1EvidenceRecord,
+  type F1ProgressEvent,
+  type F1ReconstructionInput,
+  type F1ReconstructionResult,
+  type F1VisionDeps,
+  type F1Htir,
+} from './f1-recon';
 import { emitEvent, recordLlmCalls, recordUsage } from './events';
 import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
@@ -649,6 +665,263 @@ registerExecutor({
         { type: 'twin', id: twin.id },
         { type: 'twinVersion', id: twinVersion.id },
         { type: 'solutionArtifact', id: solution.id },
+      ],
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// f1.reconstruct — P6.C4: real-human F1 reconstruction (the reconstruction
+// side of docs/F1_OPERATOR_CAPTURE.md). Consent-gated entry, fail-closed
+// liveness/quality checkpoints, per-asset registry-resolved VLM analysis,
+// honest F1ReconstructionReport aggregation, and a published TwinVersion
+// carrying the F1 provenance (evidence manifest hashes, consent grant id,
+// model + provider used, per-region confidences). The heavy lifting lives in
+// lab/f1-recon.ts (pure, deps-injected); this executor wires the real seams:
+// object storage (core/storage), the recon vision seam
+// (adapters/vlm-recon → ai/recon-provider → ai/registry), and Prisma.
+// Submitted by POST /api/v1/captures/:id/reconstruct (consent-gated there
+// too — server-enforced at BOTH layers).
+// ═══════════════════════════════════════════════════════════════════════════
+
+registerExecutor({
+  kind: F1_RECONSTRUCT_JOB_KIND,
+  async execute(input, ctx) {
+    const captureSessionId = reqString(input, 'captureSessionId');
+    const style = parseStyle(input.style);
+    const steps = new Steps([
+      ['load', 'Load capture session and twin'],
+      ['consent', 'Verify reconstruct consent (server-enforced)'],
+      ['checkpoints', 'Liveness and quality checkpoints (fail-closed)'],
+      ['analyze', 'Per-asset VLM analysis (registry-resolved)'],
+      ['report', 'Aggregate F1 reconstruction report'],
+      ['persist', 'Publish TwinVersion with F1 provenance'],
+    ]);
+
+    await ctx.report({ steps: steps.running('load'), progress: 0.05, status: 'running' });
+    const session = await db.captureSession.findUnique({
+      where: { id: captureSessionId },
+      include: { assets: true, twin: true },
+    });
+    if (!session) throw new Error(`not_found: capture session ${captureSessionId}`);
+    if (session.tenantId !== ctx.tenantId) throw new Error(`forbidden: session belongs to another tenant`);
+    steps.done('load', `${session.assets.length} assets, session status "${session.status}"`);
+    await ctx.report({ steps: steps.all(), progress: 0.1 });
+
+    // consent (defense-in-depth: the route already enforced requireConsent;
+    // runF1Reconstruction's own gate refuses BEFORE any evidence byte loads)
+    await ctx.report({ steps: steps.running('consent'), progress: 0.12 });
+    const grants = await db.consentGrant.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        subjectId: session.twin.subjectId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    const grantInputs = grants.map((g) => ({
+      id: g.id,
+      scopes: parseJsonField<string[]>(g.scopes, []),
+      revokedAt: g.revokedAt,
+      expiresAt: g.expiresAt,
+    }));
+
+    const assets: F1EvidenceRecord[] = session.assets.map((a) => ({
+      assetId: a.id,
+      storageKey: a.storageKey,
+      kind: a.kind,
+      mime: a.mime,
+      contentHash: a.contentHash,
+      declaredBytes: a.bytes,
+      regions: parseJsonField<CaptureRegion[]>(a.regions, []),
+    }));
+    const reconInput: F1ReconstructionInput = {
+      captureSessionId: session.id,
+      twinId: session.twinId,
+      subjectId: session.twin.subjectId,
+      sessionStatus: session.status,
+      grants: grantInputs,
+      assets,
+    };
+    const deps: F1VisionDeps = {
+      loadBytes: async (storageKey) => {
+        const buf = await getObject(storageKey);
+        return buf ? new Uint8Array(buf) : null;
+      },
+      analyzeAsset: (asset, contextNote) =>
+        analyzeAssetReconstruction(
+          { id: asset.assetId, storageKey: asset.storageKey, mime: asset.mime, regions: asset.regions },
+          style,
+          contextNote,
+        ),
+      resolveVision: () => {
+        const r = reconResolution();
+        return { provider: r.provider, modelId: r.modelId, source: r.source };
+      },
+    };
+    let sawAnalysis = false;
+    const hooks = {
+      onProgress: async (e: F1ProgressEvent) => {
+        if (e.stage === 'checkpoint') {
+          steps.running('checkpoints', `asset ${e.index}/${e.total} (${e.assetId})`);
+          await ctx.report({ steps: steps.all(), progress: 0.18 + 0.12 * (e.index / e.total) });
+        } else {
+          if (!sawAnalysis) {
+            steps.done('checkpoints');
+            sawAnalysis = true;
+          }
+          steps.running('analyze', `asset ${e.index}/${e.total} (${e.assetId})`);
+          await ctx.report({ steps: steps.all(), progress: 0.3 + 0.4 * (e.index / e.total) });
+        }
+      },
+    };
+
+    let reconResult: F1ReconstructionResult;
+    try {
+      reconResult = await runF1Reconstruction(reconInput, deps, hooks);
+    } catch (err) {
+      if (err instanceof F1TypedRefusal) {
+        // durable step-trail for the typed gate that refused (verbatim code)
+        const stepKey =
+          err.code === 'consent_required' ? 'consent' : err.code === 'session_incomplete' ? 'load' : 'analyze';
+        steps.failed(stepKey, `${err.code}: ${err.message}`);
+        await ctx.report({ steps: steps.all(), status: 'failed' }).catch(() => undefined);
+      }
+      throw err;
+    }
+    const { report, analyzedAssets, grantId, vision } = reconResult;
+    steps.done('consent', `grant ${grantId} (scope reconstruct, verified in-pipeline before evidence load)`);
+    steps.done(
+      'checkpoints',
+      `${report.overall.assetsRefused} refused, ${report.overall.assetsSkippedNonImage} skipped non-image`,
+    );
+    steps.done(
+      'analyze',
+      `${report.overall.assetsAnalyzed} analyzed — ${report.usage.llmCalls} VLM calls, ${report.usage.totalLatencyMs}ms total (provider ${vision.provider}/${vision.modelId})`,
+    );
+    steps.done(
+      'report',
+      `coverage ${(report.overall.protocolCoverageRatio * 100).toFixed(0)}% of the 8-step protocol; confidence ${report.overall.confidenceOverall}`,
+    );
+    await ctx.report({ steps: steps.all(), progress: 0.85 });
+
+    // HTIR draft: the SHARED C1 aggregation over the same per-asset analyses
+    // (twin.compile and f1.reconstruct produce the same honest draft shape)
+    await ctx.report({ steps: steps.running('persist'), progress: 0.88 });
+    const pipeline = await loadPipelineByName('hand-designed-hybrid');
+    const draft = aggregateHtirDraft(analyzedAssets);
+    const version = session.twin.currentVersion + 1;
+    const htir: F1Htir = {
+      twinId: session.twinId,
+      version,
+      morphology: draft.morphology,
+      geometry: draft.geometry,
+      appearance: draft.appearance,
+      articulation: draft.articulation,
+      neuralAppearance: draft.neuralAppearance,
+      motionProfile: draft.motionProfile,
+      voice: null,
+      styleProfiles: [{ style, params: { seed: 42 } }],
+      confidence: draft.confidence,
+      provenance: {
+        subjectId: session.twin.subjectId,
+        consentGrantIds: [grantId],
+        evidenceAssetIds: assets.map((a) => a.assetId),
+        evidenceHashes: assets.map((a) => a.contentHash),
+        pipeline: {
+          pipelineId: pipeline.id,
+          components: [
+            { adapterId: VLM_RECON_ADAPTER.adapterId, version: VLM_RECON_ADAPTER.version },
+            { adapterId: F1_RECON_ADAPTER.adapterId, version: F1_RECON_ADAPTER.version },
+          ],
+        },
+        compiledAt: new Date().toISOString(),
+        compiledBy: 'f1.reconstruct',
+        f1: buildF1ProvenanceBlock(reconInput, report),
+      },
+    };
+    const twinVersion = await db.twinVersion.create({
+      data: {
+        twinId: session.twinId,
+        version,
+        status: 'published', // published versions are immutable
+        htir: JSON.stringify(htir),
+        inputVersionIds: JSON.stringify([]),
+        pipelineId: pipeline.id,
+        evidenceAssetIds: JSON.stringify(assets.map((a) => a.assetId)),
+        confidenceSummary: JSON.stringify(htir.confidence),
+      },
+    });
+    await db.twin.update({
+      where: { id: session.twinId },
+      data: { currentVersion: version, status: 'reconstructed' },
+    });
+    // the full F1ReconstructionReport is durable ON the TwinVersion — a
+    // Representation row the review/deletion chain can walk (f1-recon-report)
+    await db.representation.create({
+      data: {
+        twinVersionId: twinVersion.id,
+        kind: 'f1-recon-report',
+        adapterId: F1_RECON_ADAPTER.adapterId,
+        params: JSON.stringify({ report, inferenceOnly: true }),
+      },
+    });
+    steps.done('persist', `v${version} published (immutable); F1 report attached via representation "${F1_RECON_ADAPTER.adapterId}"`);
+    await ctx.report({ steps: steps.all(), progress: 1 });
+
+    await emitEvent(ctx.tenantId, 'twin.version.published', 'twinVersion', twinVersion.id, {
+      twinId: session.twinId,
+      version,
+      confidence: htir.confidence.overall,
+      deficiencies: draft.confidence.deficiencies.length,
+      llmCalls: report.usage.llmCalls,
+      f1: {
+        jobKind: 'f1.reconstruct',
+        captureSessionId: session.id,
+        protocolCoverageRatio: report.overall.protocolCoverageRatio,
+        protocolStepsCovered: report.overall.protocolStepsCovered,
+        protocolStepsPartial: report.overall.protocolStepsPartial,
+        protocolStepsMissing: report.overall.protocolStepsMissing,
+        assetsRefused: report.overall.assetsRefused,
+        assetsFailed: report.overall.assetsFailed,
+        assetsSkippedNonImage: report.overall.assetsSkippedNonImage,
+        visionProvider: vision.provider,
+        visionModel: vision.modelId,
+      },
+    });
+    await recordLlmCalls(ctx.tenantId, report.usage.llmCalls, {
+      jobKind: 'f1.reconstruct',
+      captureSessionId: session.id,
+      twinId: session.twinId,
+    });
+    await recordUsage(ctx.tenantId, 'job.f1.reconstruct', 1, {
+      captureSessionId: session.id,
+      twinId: session.twinId,
+      twinVersionId: twinVersion.id,
+    });
+
+    return {
+      output: {
+        twinVersionId: twinVersion.id,
+        version,
+        confidence: htir.confidence.overall,
+        f1: {
+          reportSchema: report.schema,
+          overall: report.overall,
+          vision: report.vision,
+          perRegionConfidence: report.perRegionConfidence,
+          regionCoverage: report.regionCoverage,
+          protocolCoverage: report.protocolCoverage,
+          qualityFindings: report.qualityFindings,
+          failures: report.failures,
+          evidenceManifest: report.evidenceManifest,
+          usage: report.usage,
+        },
+      },
+      entities: [
+        { type: 'twin', id: session.twinId },
+        { type: 'twinVersion', id: twinVersion.id },
+        { type: 'captureSession', id: session.id },
       ],
     };
   },

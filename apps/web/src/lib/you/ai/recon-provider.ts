@@ -18,9 +18,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { visionAnalyze } from './zai';
 import { openRouterVisionAnalyze } from './openrouter';
-import { resolveModel } from './registry';
+import { resolveModel, type ResolutionSource } from './registry';
 
 export type ReconProvider = 'local' | 'openrouter';
+
+/** What the recon seam will route to: provider + registry-resolved model. */
+export interface ReconResolution {
+  readonly provider: ReconProvider;
+  readonly modelId: string;
+  readonly source: ResolutionSource;
+}
 
 export function reconProvider(): ReconProvider {
   const raw = (process.env.YOU_RECON_PROVIDER ?? 'local').trim().toLowerCase();
@@ -31,18 +38,32 @@ export function reconProvider(): ReconProvider {
   );
 }
 
+/**
+ * The single resolution snapshot for the recon vision concern — the exact
+ * provider + model reconVisionAnalyze would use on its next call (same code
+ * path: reconProvider() → resolveModel('vision')). P6.C4's f1.reconstruct
+ * pipeline records this as TwinVersion provenance (which provider + model
+ * actually saw the evidence); calling it separately changes nothing about
+ * routing — reconVisionAnalyze still resolves per call through this same
+ * function.
+ */
+export function reconResolution(): ReconResolution {
+  const provider = reconProvider();
+  // P6.C5: the ONE model-resolution point for the recon vision concern.
+  // Also fail-closes on a missing OPENROUTER_API_KEY at resolution time.
+  const resolved = resolveModel('vision', { provider });
+  return { provider, modelId: resolved.modelId, source: resolved.source };
+}
+
 /** The single vision-analysis entry point for the recon path. */
 export async function reconVisionAnalyze(
   imageBase64DataUrl: string,
   prompt: string,
   opts: { thinking?: boolean } = {},
 ) {
-  const provider = reconProvider();
-  // P6.C5: the ONE model-resolution point for the recon vision concern.
-  // Also fail-closes on a missing OPENROUTER_API_KEY at resolution time.
-  const resolved = resolveModel('vision', { provider });
+  const { provider, modelId } = reconResolution();
   if (provider === 'openrouter') {
-    return openRouterVisionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: resolved.modelId });
+    return openRouterVisionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: modelId });
   }
-  return visionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: resolved.modelId });
+  return visionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: modelId });
 }

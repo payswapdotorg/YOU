@@ -355,6 +355,46 @@ export interface EvidenceSetAnalysis {
   usage: { llmCalls: number; totalLatencyMs: number };
 }
 
+// ─── Public API: single-asset reconstruction analysis (P6.C4 f1.reconstruct) ─
+
+export interface AssetReconstructionResult {
+  analysis: VlmAssetAnalysis;
+  /** real call accounting for this asset, including the JSON-retry call if any */
+  usage: { llmCalls: number; totalLatencyMs: number };
+}
+
+/**
+ * ONE asset through the evidence-set prompt — the shared per-asset call used
+ * by both twin.compile's analyzeEvidenceSet loop and the P6.C4
+ * f1.reconstruct executor. The optional contextNote (F1 capture context:
+ * declared regions + protocol steps) is appended verbatim after the style
+ * line; an absent note produces the exact twin.compile prompt, byte-for-byte
+ * (behavior-preserving extraction — the C1 contract is untouched).
+ */
+export async function analyzeAssetReconstruction(
+  asset: VlmReconAssetInput,
+  style: RenderStyle,
+  contextNote?: string,
+): Promise<AssetReconstructionResult> {
+  const dataUrl = await assetToDataUrl(asset);
+  const prompt =
+    `${EVIDENCE_SET_PROMPT}\n\nTarget render style for the avatar: "${style}".` +
+    (contextNote ? `\n\n${contextNote}` : '');
+  let llmCalls = 1;
+  const res = await reconVisionAnalyze(dataUrl, prompt, { thinking: false });
+  let totalLatencyMs = res.latencyMs;
+  const parsed = await parseModelJson<Record<string, unknown>>(res.content, async () => {
+    const retry = await reconVisionAnalyze(dataUrl, prompt + JSON_ONLY_REMINDER, { thinking: false });
+    llmCalls += 1;
+    totalLatencyMs += retry.latencyMs;
+    return retry.content;
+  });
+  return {
+    analysis: normalizeAssetAnalysis(asset.id, parsed, res.latencyMs),
+    usage: { llmCalls, totalLatencyMs },
+  };
+}
+
 export async function analyzeEvidenceSet(
   assets: VlmReconAssetInput[],
   style: RenderStyle
@@ -368,18 +408,27 @@ export async function analyzeEvidenceSet(
   let llmCalls = 0;
 
   for (const asset of assets) {
-    const dataUrl = await assetToDataUrl(asset);
-    const prompt = `${EVIDENCE_SET_PROMPT}\n\nTarget render style for the avatar: "${style}".`;
-    const res = await reconVisionAnalyze(dataUrl, prompt, { thinking: false });
-    llmCalls += 1;
-    totalLatencyMs += res.latencyMs;
-    const parsed = await parseModelJson<Record<string, unknown>>(res.content, async () => {
-      const retry = await reconVisionAnalyze(dataUrl, prompt + JSON_ONLY_REMINDER, { thinking: false });
-      llmCalls += 1;
-      totalLatencyMs += retry.latencyMs;
-      return retry.content;
-    });
-    perAsset.push(normalizeAssetAnalysis(asset.id, parsed, res.latencyMs));
+    const { analysis, usage } = await analyzeAssetReconstruction(asset, style);
+    perAsset.push(analysis);
+    llmCalls += usage.llmCalls;
+    totalLatencyMs += usage.totalLatencyMs;
+  }
+
+  const htirDraft = aggregateHtirDraft(perAsset);
+  return { htirDraft, perAsset, usage: { llmCalls, totalLatencyMs } };
+}
+
+// ─── Public API: HTIR-draft aggregation over per-asset analyses (shared) ─────
+
+/**
+ * Aggregate per-asset analyses into the HTIR draft (P6.C4 extraction of the
+ * C1 aggregation — behavior-preserving, moved verbatim). twin.compile and
+ * f1.reconstruct share it, so both paths produce the same honest draft from
+ * the same per-asset analyses.
+ */
+export function aggregateHtirDraft(perAsset: VlmAssetAnalysis[]): EvidenceSetAnalysis['htirDraft'] {
+  if (perAsset.length === 0) {
+    throw new Error('vlm-recon-1: aggregateHtirDraft called with zero assets — refusing to fabricate an HTIR draft');
   }
 
   const usable = perAsset.filter((a) => a.usable);
@@ -553,7 +602,7 @@ export async function analyzeEvidenceSet(
     },
   };
 
-  return { htirDraft, perAsset, usage: { llmCalls, totalLatencyMs } };
+  return htirDraft;
 }
 
 // ─── Normalization helpers ────────────────────────────────────────────────────
