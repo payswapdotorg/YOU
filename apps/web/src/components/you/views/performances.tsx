@@ -9,6 +9,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Drama, Loader2, Plus, RefreshCcw, ScrollText, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
+import { describeApiError } from '@/lib/you/client/error-taxonomy';
 import type { PerformanceView, TwinView } from '@/lib/you/contracts';
 import { useJob } from '@/hooks/you/use-job';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { IdChip, PageHeader, SectionCard, StatusBadge, EmptyState } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { JobSteps } from '@/components/you/lab/job-steps';
 import { TrackTimeline, fmtMs } from '@/components/you/artifact/track-timeline';
 
@@ -125,6 +127,9 @@ export function PerformancesView() {
   const [twinId, setTwinId] = useState<string>('none');
   const [jobId, setJobId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // P6.B8: typed error surface for honest refusals (503 provider/service
+  // unavailable, 429 rate-limited) — inline retry guidance, not a bare toast
+  const createErrors = useApiErrorSurface('Performance creation');
 
   const performances = useQuery({ queryKey: ['performances'], queryFn: () => api.performances.list() });
   const twins = useQuery({ queryKey: ['twins'], queryFn: () => api.twins.list() });
@@ -140,11 +145,15 @@ export function PerformancesView() {
         uid(),
       ),
     onSuccess: (res) => {
+      createErrors.clear();
       setJobId(res.jobId);
       toast.success('Performance job started — compiling tracks from script');
     },
     onError: (err) => {
-      const msg = err instanceof YouApiError ? err.message : 'request failed';
+      // P6.B8: typed provider/service-unavailable or rate-limited refusals
+      // render the honest inline surface instead of a bare toast
+      if (createErrors.capture(err)) return;
+      const msg = err instanceof YouApiError ? describeApiError(err) : 'request failed';
       toast.error(`Create failed — ${msg}`);
     },
   });
@@ -213,6 +222,12 @@ export function PerformancesView() {
               </Button>
             </div>
           </SectionCard>
+
+          <ApiErrorSurface
+            surface={createErrors}
+            onRetry={() => createFromText.mutate()}
+            retrying={createFromText.isPending}
+          />
 
           {jobId ? (
             <SectionCard

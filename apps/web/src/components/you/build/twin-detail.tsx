@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, IdChip, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { useJob } from '@/hooks/you/use-job';
 import { useYouStore } from '@/hooks/you/use-you-store';
 import { api, uid } from '@/lib/you/client/api';
@@ -37,7 +38,9 @@ export const TWIN_TABS = ['versions', 'capture', 'improve', 'compare'] as const;
 export type TwinTab = (typeof TWIN_TABS)[number];
 
 const SESSION_TERMINAL: CaptureSessionView['status'][] = ['complete', 'failed'];
-const JOB_TERMINAL = ['succeeded', 'failed', 'cancelled', 'unavailable'];
+// P6.B8: `dead` (dead-letter terminal, P6.A6-FULL) included — a dead compile
+// job is NOT running; treating it as live would spin forever.
+const JOB_TERMINAL = ['succeeded', 'failed', 'cancelled', 'unavailable', 'dead'];
 
 // LIMITATION (documented for TL): the frozen wave-1 client has no endpoint to
 // list Solution Artifacts by twin version. The "Open Solution Artifact" button
@@ -92,13 +95,21 @@ export function TwinDetail({
   // ── Reconstruct (twin.compile) ────────────────────────────────────────────
   const [compileJobId, setCompileJobId] = useState<string | null>(null);
   const [compileOpen, setCompileOpen] = useState(false);
+  // P6.B8: typed error surface for the compile route's honest refusals (503
+  // service_unavailable — provider circuit breaker open; 429 rate-limited).
+  // Renders retry guidance derived from retryAfterMs and fires ONE automatic
+  // retry after the backend's window; cleared on success.
+  const compileErrors = useApiErrorSurface('Twin reconstruction');
   const compile = useMutation({
     mutationFn: () => api.twins.compile(twinId, {}, uid()),
     onSuccess: ({ jobId }) => {
+      compileErrors.clear();
       setCompileJobId(jobId);
       setCompileOpen(true);
     },
     onError: (err) => {
+      // honest degraded/rate-limited surfaces with retry guidance — not toasts
+      if (compileErrors.capture(err)) return;
       toast.error('Could not start reconstruction', { description: err instanceof Error ? err.message : 'Unexpected error' });
     },
   });
@@ -131,6 +142,14 @@ export function TwinDetail({
   useEffect(() => {
     if (compileJob && (compileJob.status === 'failed' || compileJob.status === 'cancelled' || compileJob.status === 'unavailable')) {
       toast.error('Reconstruction failed', { description: compileJob.error ?? `Job ended as ${compileJob.status}.` });
+    }
+    // P6.B8: dead is a DIFFERENT terminal state — retry budget exhausted.
+    // The dead-letter surface (JobStepsPanel) carries the full explanation;
+    // the toast only signals the terminal transition honestly.
+    if (compileJob && compileJob.status === 'dead') {
+      toast.error('Reconstruction is dead — retry budget exhausted', {
+        description: 'The job was moved to the dead-letter queue. Operators can replay it from the maintenance console.',
+      });
     }
   }, [compileJob?.status]);
 
@@ -302,6 +321,16 @@ export function TwinDetail({
           <StatusBadge status={compileJob.status} />
         </button>
       ) : null}
+
+      {/* P6.B8 — honest error surface: the compile route refused with a
+          typed 503 (provider unavailable) or 429 (rate-limited). Retry
+          guidance derives from the backend's retryAfterMs (one automatic
+          retry after the window); nothing is running, nothing is fabricated. */}
+      <ApiErrorSurface
+        surface={compileErrors}
+        onRetry={() => compile.mutate()}
+        retrying={compile.isPending}
+      />
 
       <Tabs value={tab} onValueChange={(v) => onTabChange(v as TwinTab)}>
         <TabsList className="h-10 w-full justify-start overflow-x-auto you-scroll p-1 sm:w-auto">

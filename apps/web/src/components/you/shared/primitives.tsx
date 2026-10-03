@@ -53,6 +53,13 @@ const STATUS_VARIANTS: Record<string, string> = {
   live: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
   delivered: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
   failed: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',
+  // P6.B8: circuit-breaker states (metrics surface) — closed is the healthy
+  // resting state; open/half-open are the cooling-down states.
+  closed: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
+  'half-open': 'bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/25',
+  // P6.B8: terminal dead-letter state — a dead job exhausted its bounded
+  // retry budget (distinct from failed); terminal-red, no pulse.
+  dead: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',
   cancelled: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',
   revoked: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',
   error: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',

@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { IdChip, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { useJob } from '@/hooks/you/use-job';
 import { api, uid } from '@/lib/you/client/api';
 import type { CaptureSessionView } from '@/lib/you/contracts';
@@ -26,6 +27,10 @@ export function CaptureSessionPanel({
   onConsentRequired: (hint: string) => void;
 }) {
   const [jobId, setJobId] = useState<string | null>(null);
+  // P6.B8: typed error surface for honest refusals (503 provider/service
+  // unavailable, 429 rate-limited on the upload-adjacent buckets) — inline
+  // retry guidance instead of a bare toast
+  const completeErrors = useApiErrorSurface('Capture analysis');
 
   // Poll the session while it is in a non-terminal state.
   const sessionQ = useQuery({
@@ -42,8 +47,12 @@ export function CaptureSessionPanel({
 
   const complete = useMutation({
     mutationFn: () => api.captures.complete(session.id, uid()),
-    onSuccess: ({ jobId: jid }) => setJobId(jid),
+    onSuccess: ({ jobId: jid }) => {
+      completeErrors.clear();
+      setJobId(jid);
+    },
     onError: (err) => {
+      if (completeErrors.capture(err)) return;
       toast.error('Could not start analysis', { description: err instanceof Error ? err.message : 'Unexpected error' });
     },
   });
@@ -95,6 +104,13 @@ export function CaptureSessionPanel({
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {session.error}
           </p>
         ) : null}
+
+        {/* P6.B8 — honest error surface for the analyze-and-complete call */}
+        <ApiErrorSurface
+          surface={completeErrors}
+          onRetry={() => complete.mutate()}
+          retrying={complete.isPending}
+        />
 
         {jobId ? (
           <div className="rounded-lg border bg-muted/25 p-4">

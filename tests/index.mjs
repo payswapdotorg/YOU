@@ -31,5 +31,10 @@ import './contract/resilience.test.mjs';
 // P6.C2 render-path suite (imported statically, LAST — pure unit + a local
 // 127.0.0.1 DashScope mock; injected sleeps/clocks, no app boot, no db)
 import './contract/ai-render.test.mjs';
+// P6.B8 UX-states unit suite (imported statically, LAST — pure unit over the
+// zero-runtime-import client modules degraded.ts + error-taxonomy.ts: 503 /
+// Retry-After parsing, countdown math, dead-job explanation, error taxonomy;
+// no React, no network, no db)
+import './contract/ux-states.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

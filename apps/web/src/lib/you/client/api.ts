@@ -26,15 +26,63 @@ async function call<T>(path: string, init?: RequestInit & { idempotencyKey?: str
   });
   if (!res.ok) {
     let code = 'internal_error', message = res.statusText;
-    try { const body = await res.json(); code = body?.error?.code ?? code; message = body?.error?.message ?? message; } catch { /* keep default */ }
-    throw new YouApiError(code, message, res.status);
+    let details: unknown;
+    try {
+      const body = await res.json();
+      code = body?.error?.code ?? code;
+      message = body?.error?.message ?? message;
+      details = body?.error?.details;
+    } catch { /* keep default */ }
+    // P6.B8: propagate the TYPED envelope (code/details/guidance) plus the
+    // Retry-After header instead of flattening everything to strings — the
+    // degraded surfaces (shared/degraded-state.tsx) derive honest retry
+    // guidance from these fields. Never fabricated, never dropped.
+    throw new YouApiError(code, message, res.status, {
+      details,
+      retryAfterHeaderSeconds: res.headers.get('retry-after'),
+    });
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 export class YouApiError extends Error {
-  constructor(public code: string, message: string, public status: number) { super(message); }
+  /** Envelope `details` verbatim (degraded: provider, breakerState, guidance…). */
+  readonly details?: unknown;
+  /** Retry guidance in ms (envelope details first, Retry-After header fallback). */
+  readonly retryAfterMs?: number;
+  /** Backend/operator guidance string from the envelope, when present. */
+  readonly guidance?: string;
+
+  constructor(
+    public code: string,
+    message: string,
+    public status: number,
+    opts?: { details?: unknown; retryAfterHeaderSeconds?: string | null },
+  ) {
+    super(message);
+    this.name = 'YouApiError';
+    const d = opts?.details;
+    const rec = d && typeof d === 'object' && !Array.isArray(d) ? (d as Record<string, unknown>) : null;
+    // P6.B8: retry-window derivation mirrors client/degraded.ts
+    // retryAfterMsFromEnvelope() 1:1 (details.retryAfterSeconds first, then
+    // the Retry-After header). Deliberately INLINED, not imported: this module
+    // uses constructor parameter properties (not erasable TS), so it is NOT
+    // node:test-importable — the pure twin in degraded.ts is the unit-tested
+    // source of these semantics (P6.B8 disclosure in the report).
+    const fromDetails = rec && typeof rec.retryAfterSeconds === 'number'
+      && Number.isFinite(rec.retryAfterSeconds) && rec.retryAfterSeconds > 0
+      ? rec.retryAfterSeconds * 1000
+      : undefined;
+    const headerSeconds = Number(opts?.retryAfterHeaderSeconds);
+    const fromHeader = opts?.retryAfterHeaderSeconds !== undefined && opts?.retryAfterHeaderSeconds !== null
+      && Number.isFinite(headerSeconds) && headerSeconds > 0
+      ? headerSeconds * 1000
+      : undefined;
+    this.details = d;
+    this.retryAfterMs = fromDetails ?? fromHeader;
+    this.guidance = rec && typeof rec.guidance === 'string' && rec.guidance ? rec.guidance : undefined;
+  }
 }
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -45,6 +93,72 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 export const uid = () => (globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+// ─── Operator surface view types (P6.A6-FULL routes, P6.B8 client mirror) ───
+
+/** Dead-letter payload as the maintenance route parses it (core/deadletter.ts). */
+export interface DeadLetterView {
+  code: 'dead_letter';
+  attempts: number;
+  stoppedBy: string;
+  firstAttemptAt: string;
+  lastErrorAt: string;
+  lastError: string;
+}
+
+/** GET /api/v1/maintenance/dead-jobs response (operator-gated). */
+export interface DeadJobsView {
+  retentionDays: number;
+  count: number;
+  jobs: {
+    id: string;
+    kind: string;
+    status: 'dead';
+    createdAt: string;
+    firstAttemptAt: string | null;
+    finishedAt: string | null;
+    /** Structured dead-letter payload when parseable; null never lies. */
+    deadLetter: DeadLetterView | null;
+  }[];
+}
+
+/** One provider's circuit-breaker snapshot (GET /api/v1/metrics). */
+export interface BreakerStatusView {
+  state: 'closed' | 'open' | 'half-open';
+  failuresInWindow: number;
+  failureThreshold: number;
+  windowMs: number;
+  cooldownMs: number;
+  openedAt: string | null;
+  openedReason: string | null;
+  lastError: string | null;
+  lastFailureAt: string | null;
+  /** Remaining cooldown in ms while open (0 otherwise). */
+  retryAfterMs: number;
+  successCount: number;
+  failureCount: number;
+}
+
+/** GET /api/v1/metrics response (operator-gated). */
+export interface MetricsView {
+  scope: {
+    tenantId: string;
+    processUptimeSeconds: number;
+    countersAndBreakers: string;
+    jobCounts: string;
+  };
+  /** Process-local counters (labeled as such by the route). */
+  counters: Record<string, number>;
+  breakers: Record<string, BreakerStatusView>;
+  deadJobs: {
+    count: number;
+    oldest: { id: string; kind: string; finishedAt: string | null } | null;
+    retentionDays: number;
+    inspection: string;
+  };
+  /** Tenant-scoped job counts by status (dead included). */
+  jobs: Record<string, number>;
+}
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 export const api = {
@@ -195,6 +309,24 @@ export const api = {
   jobs: {
     get: (id: string) => call<JobView>(`/jobs/${id}`),
   },
+
+  // ─── Operator maintenance + metrics (P6.B8 surfaces over P6.A6-FULL) ─────
+  // Routes are Worker A lane (landed, frozen inventory); these client mirrors
+  // are the Studio's typed view of them. Operator-gated server-side (session
+  // actorType 'user'); 403s are rendered honestly by the UI, never retried.
+  maintenance: {
+    deadJobs: (params?: { limit?: number }) =>
+      call<DeadJobsView>(`/maintenance/dead-jobs${qs({ limit: params?.limit })}`),
+    replayDeadJob: (jobId: string, idem?: string) =>
+      call<{ jobId: string; replayed: boolean }>('/maintenance/dead-jobs', {
+        method: 'POST', body: JSON.stringify({ action: 'replay', jobId }), idempotencyKey: idem,
+      }),
+    purgeDeadJobs: (idem?: string) =>
+      call<{ purged: number; retentionDays: number; cutoff: string }>('/maintenance/dead-jobs', {
+        method: 'POST', body: JSON.stringify({ action: 'purge' }), idempotencyKey: idem,
+      }),
+  },
+  metrics: () => call<MetricsView>('/metrics'),
 };
 
 export type Api = typeof api;

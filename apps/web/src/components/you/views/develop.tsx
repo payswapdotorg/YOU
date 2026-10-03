@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
+import { describeApiError } from '@/lib/you/client/error-taxonomy';
 import type { ApiKeySecret, EventRecordView, WebhookEndpointView } from '@/lib/you/contracts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -78,7 +79,7 @@ function ApiKeysTab() {
       setName(''); setScopes(['read']);
       qc.invalidateQueries({ queryKey: ['api-keys'] });
     },
-    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
   });
 
   const revoke = useMutation({
@@ -88,7 +89,7 @@ function ApiKeysTab() {
       setRevokeId(null);
       qc.invalidateQueries({ queryKey: ['api-keys'] });
     },
-    onError: (err) => toast.error(`Revoke failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => toast.error(`Revoke failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
   });
 
   const keyToRevoke = keys.data?.find((k) => k.id === revokeId) ?? null;
@@ -384,7 +385,7 @@ function WebhooksTab() {
       setCreateOpen(false); setUrl(''); setEvents([]);
       qc.invalidateQueries({ queryKey: ['webhooks'] });
     },
-    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
   });
 
   const remove = useMutation({
@@ -394,7 +395,7 @@ function WebhooksTab() {
       setDeleteId(null);
       qc.invalidateQueries({ queryKey: ['webhooks'] });
     },
-    onError: (err) => toast.error(`Delete failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => toast.error(`Delete failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
   });
 
   const toDelete = webhooks.data?.find((w: WebhookEndpointView) => w.id === deleteId) ?? null;

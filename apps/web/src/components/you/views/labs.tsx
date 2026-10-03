@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
+import { describeApiError } from '@/lib/you/client/error-taxonomy';
 import type {
   BenchmarkRunView, FailureCaseView, LabObjectiveView, PipelineCandidateView,
   PromotionRecordView, TechnologyCandidateView,
@@ -34,6 +35,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { EmptyState, IdChip, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { GenomeViewer } from '@/components/you/lab/genome-viewer';
 import { BenchmarkRunResults } from '@/components/you/lab/run-results';
 import { JobSteps } from '@/components/you/lab/job-steps';
@@ -127,7 +129,7 @@ function CreateObjectiveDialog() {
       toast.success(`Objective ${code.trim()} created`);
       setOpen(false); setCode(''); setTitle(''); setDescription('');
     },
-    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => toast.error(`Create failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
   });
   const canSubmit = code.trim().length > 1 && title.trim().length > 0 && !create.isPending;
 
@@ -177,6 +179,9 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
   const [objectiveCode, setObjectiveCode] = useState('');
   const [worldSeed, setWorldSeed] = useState('42');
   const [jobId, setJobId] = useState<string | null>(null);
+  // P6.B8: typed error surface for honest refusals (503 provider/service
+  // unavailable, 429 rate-limited) — inline retry guidance, not a bare toast
+  const runErrors = useApiErrorSurface('Lab benchmark run');
   const { job, done, succeeded } = useJob(jobId);
 
   const runIdFromJob = succeeded ? extractRunId(job?.output) : null;
@@ -199,10 +204,16 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
       );
     },
     onSuccess: (res) => {
+      runErrors.clear();
       setJobId(res.jobId);
       toast.success('Benchmark run queued — polling the durable job');
     },
-    onError: (err) => toast.error(`Run failed — ${err instanceof YouApiError ? err.message : 'request failed'}`),
+    onError: (err) => {
+      // P6.B8: typed provider/service-unavailable or rate-limited refusals
+      // render the honest inline surface instead of a bare toast
+      if (runErrors.capture(err)) return;
+      toast.error(`Run failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`);
+    },
   });
 
   const runQuery = useQuery({
@@ -310,6 +321,11 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
               {run.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" aria-hidden />}
               Run benchmark
             </Button>
+            <ApiErrorSurface
+              surface={runErrors}
+              onRetry={() => run.mutate()}
+              retrying={run.isPending}
+            />
           </div>
         </SectionCard>
 

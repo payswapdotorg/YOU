@@ -7,6 +7,7 @@ import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { api, YouApiError } from '@/lib/you/client/api';
+import { describeApiError } from '@/lib/you/client/error-taxonomy';
 import type { CaptureChecklistItem, CaptureRegion } from '@/lib/you/contracts';
 import { Check, ChevronDown, FileUp, Loader2, RotateCw, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -91,7 +92,7 @@ export function UploadControl({
         setBlocked(err.message || 'A consent grant covering capture is required before uploading evidence.');
         onConsentRequired(err.message || 'Capture scope missing — grant consent to continue.');
       } else {
-        toast.error('Upload failed', { description: err instanceof Error ? err.message : 'Unexpected error' });
+        toast.error('Upload failed', { description: err instanceof YouApiError ? describeApiError(err) : (err instanceof Error ? err.message : 'Unexpected error') });
       }
     },
   });

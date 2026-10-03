@@ -1,9 +1,14 @@
 'use client';
 // Honest job step renderer — shows ONLY steps the backend reports.
 // Progress bar reflects job.progress (real completion signals only).
+// P6.B8: terminal states render honestly — `dead` shows the structured
+// dead-letter explanation; progress is hidden once terminal (a terminal job
+// is not progressing). No spin-forever, no raw JSON dumps.
 import type { JobView } from '@/lib/you/contracts';
 import { Progress } from '@/components/ui/progress';
 import { StatusBadge } from '@/components/you/shared/primitives';
+import { JobTerminalState } from '@/components/you/shared/degraded-state';
+import { isTerminalJobStatus } from '@/lib/you/client/degraded';
 import { Check, CircleDot, Loader2, Circle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -27,8 +32,13 @@ export function JobSteps({ job, compact = false }: { job: JobView | null; compac
           {Math.round((job.progress ?? 0) * 100)}%
         </span>
       </div>
-      <Progress value={Math.round((job.progress ?? 0) * 100)} className="h-1.5" />
-      {job.error ? (
+      {/* Progress ONLY while live — terminal jobs are not progressing */}
+      {!isTerminalJobStatus(job.status) ? (
+        <Progress value={Math.round((job.progress ?? 0) * 100)} className="h-1.5" />
+      ) : null}
+      {isTerminalJobStatus(job.status) ? (
+        <JobTerminalState job={job} kindLabel={job.kind} />
+      ) : job.error ? (
         <p className="rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
           {job.error}
         </p>
