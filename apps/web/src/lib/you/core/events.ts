@@ -9,12 +9,34 @@
 //   X-You-Signature: sha256=HMAC-SHA256(secret, timestamp + "." + rawBody)
 //   X-You-Timestamp: <unix-seconds>
 // over the exact raw body bytes sent (see docs/API_CONTRACTS.md §Webhook
-// deliveries). The no-retry-scheduler limitation is unchanged (documented).
+// deliveries).
+//
+// P6.A6-FULL: deliveries retry under the shared bounded engine (core/retry.ts)
+// — max YOU_WEBHOOK_RETRY_MAX_ATTEMPTS attempts (default 3) with exponential
+// backoff + jitter, honoring the receiver's Retry-After on 429/503, bounded by
+// a wall-clock budget. Exhaustion is recorded honestly (attempts + lastError
+// on the WebhookDelivery row); there is still no scheduled re-delivery queue —
+// a delivery that exhausts its budget stays `failed` until the receiver-side
+// event replay tooling (future work) re-drives it.
 // ═══════════════════════════════════════════════════════════════════════════
 import { createHmac } from 'crypto';
 import type { AuthContext } from './auth';
 import { db } from '@/lib/db';
 import { parseJson } from './views';
+import { withRetries, type RetryOutcome } from './retry';
+import { bumpCounter } from './metrics';
+
+/** Delivery-time HTTP failure carrying retry-after (Retry-After header, ms). */
+class WebhookHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'WebhookHttpError';
+  }
+}
 
 export type ActorType = 'user' | 'application' | 'system' | 'job';
 
@@ -82,8 +104,11 @@ async function deliverPending(deliveryIds: string[]): Promise<void> {
         createdAt: delivery.event.createdAt.toISOString(),
       });
 
-      let outcome: { status: 'delivered' | 'failed'; error?: string };
-      try {
+      // P6.A6-FULL — bounded retries per delivery: transient receiver failures
+      // (network, 429, 5xx) retry with jittered backoff; Retry-After respected;
+      // 4xx (receiver refused the payload) fail fast; never infinite.
+      const maxAttempts = Math.max(1, Math.floor(Number(process.env.YOU_WEBHOOK_RETRY_MAX_ATTEMPTS) || 3));
+      const outcome: RetryOutcome<Response> = await withRetries(async () => {
         // F-04: signed delivery — signature over timestamp + '.' + raw body
         // with the endpoint's stored secret (WebhookEndpoint.secret, never
         // exposed by the API; receivers read it from their registration flow)
@@ -100,19 +125,43 @@ async function deliverPending(deliveryIds: string[]): Promise<void> {
           body,
           signal: AbortSignal.timeout(5000),
         });
-        outcome = res.ok
-          ? { status: 'delivered' }
-          : { status: 'failed', error: `HTTP ${res.status}` };
-      } catch (err) {
-        outcome = { status: 'failed', error: err instanceof Error ? err.message : String(err) };
-      }
+        if (!res.ok) {
+          const raHeader = res.headers.get('retry-after');
+          const raSeconds = Number(raHeader);
+          const retryAfterMs =
+            raHeader && Number.isFinite(raSeconds) && raSeconds >= 0 ? raSeconds * 1000 : null;
+          throw new WebhookHttpError(res.status, retryAfterMs, `HTTP ${res.status}`);
+        }
+        return res;
+      }, {
+        maxAttempts,
+        onRetry: (info) => {
+          bumpCounter('webhook_retries', { outcome: String((info.error as { status?: number })?.status ?? 'network') });
+          console.warn(
+            `[you/events] webhook delivery ${id} attempt ${info.attempt} failed (${String(info.error instanceof Error ? info.error.message : info.error)}) — retrying in ${info.delayMs}ms`,
+          );
+        },
+      });
+
+      // drain the successful response body (release the socket)
+      if (outcome.ok) await outcome.value.arrayBuffer().catch(() => undefined);
+      const attempts = outcome.attempts;
+      const outcomeRecord: { status: 'delivered' | 'failed'; error?: string } = outcome.ok
+        ? { status: 'delivered' }
+        : {
+            status: 'failed',
+            error:
+              outcome.error instanceof Error
+                ? `${outcome.error.message}${attempts > 1 ? ` (after ${attempts} attempts)` : ''}`
+                : String(outcome.error),
+          };
 
       await db.webhookDelivery.update({
         where: { id },
         data: {
-          status: outcome.status,
-          attempts: { increment: 1 },
-          lastError: outcome.error ?? null,
+          status: outcomeRecord.status,
+          attempts: { increment: attempts },
+          lastError: outcomeRecord.error ?? null,
         },
       });
     } catch (err) {

@@ -27,12 +27,12 @@
 ## Reliability
 [x] durable jobs  <!-- Job rows + fire-and-forget runner; steps/output honest; contract suites poll to terminal states -->
 [x] idempotency  <!-- F-01 suite: same key+body → same result; 409 on divergent replay -->
-[ ] bounded retries
-[ ] dead-letter strategy
-[ ] provider circuit breaker
-[ ] graceful degraded states
+[x] bounded retries  <!-- P6.A6-FULL (PR #17): core/retry.ts — max-attempts + wall-clock budget, exp backoff + full jitter, Retry-After capped, fail-closed classification; wired into providers, jobs, webhooks -->
+[x] dead-letter strategy  <!-- P6.A6-FULL: terminal `dead` JobState (contracts-evolved at landing) + structured payload; /api/v1/maintenance/dead-jobs list/replay/purge, 30-day retention -->
+[x] provider circuit breaker  <!-- P6.A6-FULL: core/circuit-breaker.ts — per-provider rolling window, half-open single-flight probe, typed ProviderUnavailableError, manual reset/trip; breaker-inside-retry composition -->
+[x] graceful degraded states  <!-- P6.A6-FULL: twins/compile returns honest 503 + Retry-After + guidance when the recon provider breaker is open (no spin, no hang, no doomed job) -->
 [x] tracing  <!-- P6.A7 (a98e102): x-request-id correlation on all /api/v1 (inbound echo, smuggling guard) + audit events -->
-[ ] metrics
+[x] metrics  <!-- P6.A6-FULL: /api/v1/metrics (operator-gated) — retry/dead-job/breaker/rate-limit counters; process-local scope labeled honestly (multi-instance aggregation = future Upstash item) -->
 [ ] error tracking
 [x] uptime checks  <!-- P6.A7: unauthenticated /api/v1/health (db probe, honest 503, no-store) -->
 

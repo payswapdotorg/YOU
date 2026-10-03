@@ -39,10 +39,20 @@ const SERVICE = 's3';
 /** Read + validate the R2 env contract. Throws with the missing var names. */
 export function r2Config(): R2Config {
   const missing: string[] = [];
-  const accountId = process.env.YOU_R2_ACCOUNT_ID?.trim() || missing.push('YOU_R2_ACCOUNT_ID') && '';
-  const accessKeyId = process.env.YOU_R2_ACCESS_KEY_ID?.trim() || missing.push('YOU_R2_ACCESS_KEY_ID') && '';
-  const secretAccessKey = process.env.YOU_R2_SECRET_ACCESS_KEY?.trim() || missing.push('YOU_R2_SECRET_ACCESS_KEY') && '';
-  const bucket = process.env.YOU_R2_BUCKET?.trim() || missing.push('YOU_R2_BUCKET') && '';
+  // P6.A6-FULL tsc fix: the old `x || missing.push(...) && ''` idiom typed the
+  // values as `string | 0` (push returns number) — same behavior, honest types.
+  const envOrMissing = (name: string): string => {
+    const v = process.env[name]?.trim();
+    if (!v) {
+      missing.push(name);
+      return '';
+    }
+    return v;
+  };
+  const accountId = envOrMissing('YOU_R2_ACCOUNT_ID');
+  const accessKeyId = envOrMissing('YOU_R2_ACCESS_KEY_ID');
+  const secretAccessKey = envOrMissing('YOU_R2_SECRET_ACCESS_KEY');
+  const bucket = envOrMissing('YOU_R2_BUCKET');
   if (missing.length) {
     throw new Error(
       `R2 backend is not configured — missing ${missing.join(', ')} (YOU_STORAGE_BACKEND=r2 requires all four; refusing to guess where bytes live)`,

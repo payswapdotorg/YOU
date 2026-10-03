@@ -12,6 +12,9 @@ import { getExecutor } from '../lab/executors';
 import type { JobContext, JobKind, JobStep, JobState } from '../contracts';
 import { emitEvent, recordUsage } from './events';
 import { parseJson } from './views';
+import { withRetries, type RetryOutcome } from './retry';
+import { buildDeadLetterPayload, isDeadLetterOutcome, DEAD_JOB_STATUS } from './deadletter';
+import { bumpCounter } from './metrics';
 
 /**
  * W2.A lane-local widening: the frozen contracts JobKind union (TL-owned,
@@ -20,6 +23,14 @@ import { parseJson } from './views';
  * union member at landing (see w2a-report.md compatibility notes).
  */
 export type DurableJobKind = JobKind | 'template.analyze';
+
+/**
+ * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
+ * include 'dead' (the terminal dead-letter state for jobs that exhausted
+ * their bounded retry budget). The value flows through Job.status rows/views
+ * unchanged; TL should add the union member at landing.
+ */
+export type DurableJobStatus = JobState | 'dead';
 
 /** Per-kind step templates — honest stage maps executors advance via report(). */
 const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> = {
@@ -158,28 +169,91 @@ export async function runJob(jobId: string): Promise<void> {
     if (!executor) {
       throw new Error(`No executor registered for "${kind}" (Worker C lane, task 2-c). Refusing to fabricate output.`);
     }
-    const result = await executor.execute(input, ctx);
-    await db.job.update({
-      where: { id: job.id },
-      data: {
-        status: 'succeeded',
-        progress: 1,
-        output: JSON.stringify(result.output ?? {}),
-        finishedAt: new Date(),
-      },
-    });
-    await emitEvent(job.tenantId, 'job.succeeded', 'job', job.id, {
-      jobId: job.id,
-      kind,
-      entities: result.entities ?? [],
-    });
-    await recordUsage(job.tenantId, `job.${kind}`, 1, { jobId: job.id });
-  } catch (err) {
+    // P6.A6-FULL — bounded retries: the executor runs under the shared retry
+    // engine (maxAttempts + wall-clock budget, exponential backoff + jitter,
+    // retry-after respected, fail-closed classification). A retried execution
+    // re-runs the executor from its first step; executors persist only on
+    // success paths, so a failed attempt leaves no partial output behind.
+    const outcome: RetryOutcome<{ output?: Record<string, unknown>; entities?: unknown[] }> = await withRetries(
+      () => executor.execute(input, ctx),
+      jobRetryOptions(kind),
+    );
+    if (outcome.ok) {
+      await db.job.update({
+        where: { id: job.id },
+        data: {
+          status: 'succeeded',
+          progress: 1,
+          output: JSON.stringify(outcome.value.output ?? {}),
+          finishedAt: new Date(),
+        },
+      });
+      await emitEvent(job.tenantId, 'job.succeeded', 'job', job.id, {
+        jobId: job.id,
+        kind,
+        entities: outcome.value.entities ?? [],
+      });
+      await recordUsage(job.tenantId, `job.${kind}`, 1, { jobId: job.id, attempts: outcome.attempts });
+      return;
+    }
+    // failure path — dead-letter or plain failed, by retry classification
+    const message = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+    if (isDeadLetterOutcome(outcome)) {
+      // terminal dead: the bounded retry budget was spent and the job still
+      // fails — structured payload for operator inspection + replay
+      const payload = buildDeadLetterPayload(outcome);
+      await db.job
+        .update({
+          where: { id: job.id },
+          data: { status: DEAD_JOB_STATUS, error: JSON.stringify(payload), finishedAt: new Date() },
+        })
+        .catch(() => undefined);
+      bumpCounter('dead_jobs', { kind });
+      await emitEvent(job.tenantId, 'job.dead', 'job', job.id, {
+        jobId: job.id,
+        kind,
+        attempts: payload.attempts,
+        stoppedBy: payload.stoppedBy,
+        error: message,
+      });
+      return;
+    }
     // keep the honest error text verbatim (e.g. "not implemented yet (Worker C lane)")
+    await db.job
+      .update({ where: { id: job.id }, data: { status: 'failed', error: message, finishedAt: new Date() } })
+      .catch(() => undefined);
+    await emitEvent(job.tenantId, 'job.failed', 'job', job.id, { jobId: job.id, kind, error: message });
+  } catch (err) {
+    // runner-level failures (executor lookup, db writes) — honest, immediate
     const message = err instanceof Error ? err.message : String(err);
     await db.job
       .update({ where: { id: job.id }, data: { status: 'failed', error: message, finishedAt: new Date() } })
       .catch(() => undefined);
     await emitEvent(job.tenantId, 'job.failed', 'job', job.id, { jobId: job.id, kind, error: message });
   }
+}
+
+/**
+ * Job-level retry policy (P6.A6-FULL): bounded by YOU_JOB_MAX_ATTEMPTS (total
+ * attempts, default 3) and YOU_JOB_RETRY_BUDGET_MS (wall clock, default 30s);
+ * backoff knobs shared with the provider seam unless the YOU_JOB_* overrides
+ * are set. Fail-closed classification (core/retry.ts) — non-retryable
+ * executor failures (consent, validation, missing executor) fail immediately.
+ */
+function jobRetryOptions(kind: DurableJobKind) {
+  const num = (name: string, fallback: number): number => {
+    const n = Number(process.env[name]);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+  return {
+    maxAttempts: num('YOU_JOB_MAX_ATTEMPTS', 3),
+    baseDelayMs: num('YOU_JOB_RETRY_BASE_DELAY_MS', num('YOU_RETRY_BASE_DELAY_MS', 500)),
+    budgetMs: num('YOU_JOB_RETRY_BUDGET_MS', num('YOU_RETRY_BUDGET_MS', 30_000)),
+    onRetry: (info: { attempt: number; delayMs: number }) => {
+      bumpCounter('job_retries', { kind });
+      console.warn(
+        `[you/jobs] ${kind} attempt ${info.attempt} failed — retrying in ${info.delayMs}ms (bounded: max attempts + wall-clock budget; see /api/v1/metrics)`,
+      );
+    },
+  };
 }

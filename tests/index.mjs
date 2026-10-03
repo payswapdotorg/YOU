@@ -25,5 +25,8 @@ import './contract/smoke.test.mjs';
 import './contract/verification-flow.test.mjs';
 import './contract/hardening.test.mjs';
 import './contract/ai-registry.test.mjs';
+// P6.A6-FULL unit suite (imported statically, runs in the aggregated gate —
+// pure unit: injected sleeps/clocks, no server boot, no network, no db)
+import './contract/resilience.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

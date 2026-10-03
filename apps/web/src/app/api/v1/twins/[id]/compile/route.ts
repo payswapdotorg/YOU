@@ -7,15 +7,28 @@
 import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
 import { requireConsent } from '@/lib/you/core/consent';
-import { handleRoute, notFound, readJsonBody, badRequest, getIdempotencyKey } from '@/lib/you/core/errors';
+import { handleRoute, notFound, readJsonBody, badRequest, getIdempotencyKey, serviceUnavailable } from '@/lib/you/core/errors';
+import { assertProviderAvailable, ProviderUnavailableError } from '@/lib/you/core/circuit-breaker';
 import { assertSameBodyFingerprint } from '@/lib/you/core/idempotency';
 import { createJob } from '@/lib/you/core/jobs';
 import { parseJson } from '@/lib/you/core/views';
+import { reconProvider } from '@/lib/you/ai/recon-provider';
 import type { RenderStyle } from '@/lib/you/contracts';
 
 const RENDER_STYLES: RenderStyle[] = [
   'photorealistic', 'anime', 'cartoon', 'low-poly', 'game', 'illustration', 'stylized-portrait',
 ];
+
+/**
+ * P6.A6-FULL — graceful degraded state: reconstruction needs an external
+ * vision provider; when that provider's circuit breaker is OPEN the route
+ * returns an honest 503 (service_unavailable + Retry-After + guidance)
+ * instead of accepting a job that would burn its retry budget and die. No
+ * spin, no hang — the refusal is immediate.
+ */
+function reconBreakerName(): 'zai' | 'openrouter' {
+  return reconProvider() === 'openrouter' ? 'openrouter' : 'zai';
+}
 
 export async function POST(
   request: Request,
@@ -24,6 +37,33 @@ export async function POST(
   return handleRoute(async () => {
     const auth = await requireApiAuth(request);
     const { id } = await params;
+
+    // degraded-state gate BEFORE any work: refuse honestly while the vision
+    // provider is down rather than enqueueing work that cannot run
+    try {
+      assertProviderAvailable(reconBreakerName());
+    } catch (err) {
+      if (err instanceof ProviderUnavailableError) {
+        const retryAfterSeconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
+        throw serviceUnavailable(
+          `reconstruction provider "${err.provider}" is temporarily unavailable (circuit breaker open) — please retry in ~${retryAfterSeconds}s; already-queued jobs are unaffected`,
+          {
+            provider: err.provider,
+            breakerState: err.breakerState,
+            retryAfterSeconds,
+            guidance:
+              'this request was not enqueued; retry after the suggested delay. Operators: GET /api/v1/metrics, POST /api/v1/maintenance/provider-breaker to inspect/reset.',
+          },
+          { 'retry-after': String(retryAfterSeconds), 'cache-control': 'no-store' },
+        );
+      }
+      // unknown provider env (reconProvider() fail-closed throw) — honest 503
+      throw serviceUnavailable(
+        `reconstruction is not available: ${err instanceof Error ? err.message : String(err)}`,
+        { provider: 'unknown', breakerState: 'closed', guidance: 'fix the provider configuration and retry' },
+      );
+    }
+
     const body = await readJsonBody(request);
 
     const twin = await db.twin.findFirst({

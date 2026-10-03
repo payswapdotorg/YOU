@@ -11,6 +11,8 @@ export class HttpError extends Error {
     public code: string,
     message: string,
     public details?: unknown,
+    /** Extra response headers (e.g. Retry-After on 429/503 envelopes). */
+    public headers?: Record<string, string>,
   ) {
     super(message);
     this.name = 'HttpError';
@@ -27,8 +29,11 @@ export const consentRequired = (
   message = 'an active consent grant with the required scope is needed for this subject',
   details?: unknown,
 ) => new HttpError(403, ERR.CONSENT_REQUIRED, message, details);
-export const serviceUnavailable = (message: string, details?: unknown) =>
-  new HttpError(503, ERR.SERVICE_UNAVAILABLE, message, details);
+export const serviceUnavailable = (
+  message: string,
+  details?: unknown,
+  headers?: Record<string, string>,
+) => new HttpError(503, ERR.SERVICE_UNAVAILABLE, message, details, headers);
 export const notFound = (message = 'resource not found') =>
   new HttpError(404, ERR.NOT_FOUND, message);
 export const conflict = (message: string, details?: unknown) =>
@@ -40,8 +45,12 @@ export function jsonError(
   message: string,
   status: number,
   details?: unknown,
+  headers?: Record<string, string>,
 ): Response {
-  return Response.json({ error: { code, message, ...(details !== undefined ? { details } : {}) } }, { status });
+  return Response.json(
+    { error: { code, message, ...(details !== undefined ? { details } : {}) } },
+    { status, ...(headers ? { headers } : {}) },
+  );
 }
 
 /**
@@ -53,7 +62,7 @@ export async function handleRoute(fn: () => Promise<Response>): Promise<Response
     return await fn();
   } catch (err) {
     if (err instanceof HttpError) {
-      return jsonError(err.code, err.message, err.status, err.details);
+      return jsonError(err.code, err.message, err.status, err.details, err.headers);
     }
     const message = err instanceof Error ? err.message : String(err);
     console.error('[you/api] unhandled route error:', message);

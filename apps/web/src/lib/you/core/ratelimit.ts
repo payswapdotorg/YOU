@@ -20,6 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { ERR } from '../contracts';
 import { HttpError } from './errors';
+import { bumpCounter } from './metrics';
 
 interface Window {
   count: number;
@@ -85,6 +86,8 @@ export function enforceRateLimit(bucket: string, identity: string, rl?: RateLimi
     w.count += 1;
     if (w.count > rule.limit) {
       const retryAfterSec = Math.max(1, Math.ceil((w.resetAt - now) / 1000));
+      // P6.A6-FULL: every enforced rejection is counted for /api/v1/metrics
+      bumpCounter('rate_limit_hits', { bucket });
       throw new HttpError(
         429,
         ERR.RATE_LIMITED,
