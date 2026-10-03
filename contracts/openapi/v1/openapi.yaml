@@ -126,6 +126,34 @@ paths:
     post:
       summary: Capture sessions — F1 reconstruction (consent-gated, P6.C4)
       responses: {"202": {"description": "Accepted"}}
+  /captures/{id}/f1:
+    delete:
+      summary: F1 guided capture flow — delete session honoring retention policy (P6.B3)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /captures/{id}/f1/complete:
+    post:
+      summary: F1 guided capture flow — complete + content-addressed manifest (P6.B3)
+      responses: {"202": {"description": "Accepted"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /captures/{id}/f1/export:
+    get:
+      summary: F1 guided capture flow — evidence export (P6.B3)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /captures/{id}/f1/review:
+    post:
+      summary: F1 guided capture flow — review → TwinVersion promotion (P6.B3)
+      responses: {"202": {"description": "Accepted"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /captures/{id}/f1/steps/{stepId}/skip:
+    post:
+      summary: F1 guided capture flow — skip step with reason (P6.B3)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /captures/{id}/f1/steps/{stepId}/submit:
+    post:
+      summary: F1 guided capture flow — submit step asset (consent-gated, P6.B3)
+      responses: {"202": {"description": "Accepted"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /twins/{id}/capture-sessions/f1:
+    post:
+      summary: F1 guided capture session — create (consent-gated, P6.B3)
+      responses: {"201": {"description": "Created"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}}
   /consent-grants:
     get:
       summary: Consent grants
