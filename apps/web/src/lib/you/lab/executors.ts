@@ -52,6 +52,24 @@ import {
   type F1Htir,
 } from './f1-recon';
 import { emitEvent, recordLlmCalls, recordUsage } from './events';
+// P6.C6 — Agent Body/Soul production runtime: the durable agent.turn
+// executor (lib/you/agent/runtime-core.ts engine + Prisma + the real seams).
+// LIVES HERE (not lib/you/agent/runtime.ts) to break the import cycle
+// executors → agent/runtime → core/jobs → executors — the executor home is
+// also where every other executor in this file lives.
+import {
+  AGENT_TURN_JOB_KIND,
+  deriveTurnSeed,
+  normalizeBehaviorParams,
+  normalizePersona,
+  parseManifest,
+  runAgentTurnEngine,
+  type AgentCapabilityManifest,
+  type AgentSoulBehaviorParams,
+  type AgentSoulPersona,
+} from '../agent/runtime-core';
+import { executeAgentTool } from './agent-tools';
+import { requireConsent } from '../core/consent';
 import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations } from './benchmark';
@@ -1906,3 +1924,241 @@ registerExecutor({
     };
   },
 });
+
+// ─── The durable agent.turn executor (P6.C6) ─────────────────────────────────
+
+interface AgentTurnSnapshotBody {
+  name: string;
+  role: string;
+  description: string | null;
+  twinVersionId: string | null;
+  tools: string[];
+  manifest: AgentCapabilityManifest;
+}
+
+interface AgentTurnSnapshotSoul {
+  name: string;
+  description: string | null;
+  twinId: string;
+  persona: AgentSoulPersona;
+  provider: string;
+  model: string;
+  params: AgentSoulBehaviorParams;
+  manifest: AgentCapabilityManifest;
+  seed: number;
+}
+
+async function loadBodySnapshot(
+  bodyId: string,
+  version: number,
+): Promise<AgentTurnSnapshotBody | null> {
+  const row = await db.agentRuntimeBodyVersion.findUnique({
+    where: { bodyId_version: { bodyId, version } },
+  });
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.snapshot) as Partial<AgentTurnSnapshotBody>;
+    return {
+      name: typeof parsed.name === 'string' ? parsed.name : '',
+      role: typeof parsed.role === 'string' ? parsed.role : '',
+      description: typeof parsed.description === 'string' ? parsed.description : null,
+      twinVersionId: typeof parsed.twinVersionId === 'string' ? parsed.twinVersionId : null,
+      tools: Array.isArray(parsed.tools) ? parsed.tools : [],
+      manifest: parseManifest(JSON.stringify(parsed.manifest ?? {})),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadSoulSnapshot(soulId: string, version: number): Promise<AgentTurnSnapshotSoul | null> {
+  const row = await db.agentRuntimeSoulVersion.findUnique({
+    where: { soulId_version: { soulId, version } },
+  });
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.snapshot) as Partial<AgentTurnSnapshotSoul>;
+    return {
+      name: typeof parsed.name === 'string' ? parsed.name : '',
+      description: typeof parsed.description === 'string' ? parsed.description : null,
+      twinId: typeof parsed.twinId === 'string' ? parsed.twinId : '',
+      persona: normalizePersona(parsed.persona ?? {}),
+      provider: typeof parsed.provider === 'string' ? parsed.provider : 'zai',
+      model: typeof parsed.model === 'string' ? parsed.model : 'unknown',
+      params: normalizeBehaviorParams(parsed.params ?? {}),
+      manifest: parseManifest(JSON.stringify(parsed.manifest ?? {})),
+      seed: typeof parsed.seed === 'number' ? parsed.seed : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Honest required-string extraction from job input (executor convention). */
+function reqTurnString(input: Record<string, unknown>, key: string): string {
+  const v = input[key];
+  if (typeof v !== 'string' || !v.trim()) {
+    throw new Error(`validation_failed: job input.${key} (string) is required`);
+  }
+  return v;
+}
+
+const agentTurnExecutor = {
+  kind: AGENT_TURN_JOB_KIND,
+  async execute(input: Record<string, unknown>, ctx: JobContext) {
+    const sessionId = reqTurnString(input, 'sessionId');
+    const userTurnId = reqTurnString(input, 'userTurnId');
+    const message = reqTurnString(input, 'message');
+    const steps = new Steps([
+      ['load', 'Load session, pinned Body/Soul snapshots and history'],
+      ['consent', 'Re-verify embodiment consent (server-enforced, fail-closed)'],
+      ['enforce', 'Capability manifests (server-side enforcement)'],
+      ['reply', 'Run the Soul (LLM turns + bounded tool rounds)'],
+      ['persist', 'Persist agent turn with events, seed and latency'],
+    ]);
+    await ctx.report({ steps: steps.running('load'), progress: 0.05, status: 'running' });
+
+    const session = await db.agentRuntimeSession.findUnique({
+      where: { id: sessionId },
+      include: { twin: true, turns: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!session) throw new Error(`not_found: agent session ${sessionId}`);
+    if (session.tenantId !== ctx.tenantId) throw new Error('forbidden: session belongs to another tenant');
+    if (session.status !== 'live') {
+      throw new Error(`conflict: agent session ${session.id} has ended — the turn cannot run`);
+    }
+    const userTurn = session.turns.find((t) => t.id === userTurnId);
+    if (!userTurn) throw new Error(`not_found: user turn ${userTurnId} not found in session`);
+
+    const bodySnap = await loadBodySnapshot(session.bodyId, session.bodyVersion);
+    const soulSnap = await loadSoulSnapshot(session.soulId, session.soulVersion);
+    if (!bodySnap) {
+      throw new Error(`not_found: Body version snapshot (body ${session.bodyId} v${session.bodyVersion}) is missing — refusing to fabricate a definition`);
+    }
+    if (!soulSnap) {
+      throw new Error(`not_found: Soul version snapshot (soul ${session.soulId} v${session.soulVersion}) is missing — refusing to fabricate a definition`);
+    }
+    steps.done('load', `body v${session.bodyVersion}, soul v${session.soulVersion}, ${session.turns.length} turns`);
+
+    await ctx.report({ steps: steps.running('consent'), progress: 0.15 });
+    // consent re-verified PER TURN (fail-closed: revoked mid-session ends the
+    // turn honestly, never silently)
+    const grant = await requireConsent(ctx.tenantId, session.twin.subjectId, 'embodiment');
+    steps.done('consent', `grant ${grant.id}`);
+
+    await ctx.report({ steps: steps.running('enforce'), progress: 0.2 });
+    if (!soulSnap.manifest.can.includes('conversation')) {
+      throw new Error(
+        `policy_blocked: Soul v${session.soulVersion} does not declare the conversation capability — its manifest cannot run chat turns`,
+      );
+    }
+    steps.done('enforce', 'conversation ok; tools gated per invocation');
+
+    await ctx.report({ steps: steps.running('reply'), progress: 0.3 });
+    const history = session.turns
+      .filter((t) => t.id !== userTurnId)
+      .map((t) => ({ role: t.role === 'agent' ? ('agent' as const) : ('user' as const), content: t.content }));
+    const agentTurnOrdinal = session.turns.filter((t) => t.role === 'agent').length;
+    const turnSeed = deriveTurnSeed(session.seed, agentTurnOrdinal, userTurnId);
+
+    // the pure engine (agent/runtime-core) with the REAL seams injected:
+    // chatComplete carries breaker-inside-retry per LLM call; executeAgentTool
+    // is the W2.C registry (body-contract enforcement) — the Soul capability
+    // manifest is enforced INSIDE the engine before any tool executes.
+    const result = await runAgentTurnEngine(
+      {
+        chat: (msgs, opts) => chatComplete(msgs, opts),
+        executeTool: (toolCtx, call) => executeAgentTool(toolCtx, call),
+        now: () => Date.now(),
+        uuid: () => crypto.randomUUID(),
+      },
+      {
+        tenantId: ctx.tenantId,
+        sessionId: session.id,
+        twinId: session.twinId,
+        body: {
+          name: bodySnap.name,
+          role: bodySnap.role,
+          description: bodySnap.description,
+          version: session.bodyVersion,
+          tools: bodySnap.tools,
+          manifest: bodySnap.manifest,
+          twinVersionId: bodySnap.twinVersionId,
+        },
+        soul: {
+          name: soulSnap.name,
+          description: soulSnap.description,
+          version: session.soulVersion,
+          persona: soulSnap.persona,
+          manifest: soulSnap.manifest,
+          params: soulSnap.params,
+          provider: soulSnap.provider,
+          model: soulSnap.model,
+          twinDisplayName: session.twin.displayName,
+        },
+        history,
+        message,
+        turnSeed,
+      },
+    );
+    steps.done('reply', `${result.llmCalls} LLM call(s), ${result.tools.length} tool round(s), ${result.latencyMs}ms`);
+
+    await ctx.report({ steps: steps.running('persist'), progress: 0.85 });
+    // persist ONLY on full success (the core/jobs.ts retry law: a failed
+    // attempt leaves no partial output behind)
+    const agentTurn = await db.agentRuntimeTurn.create({
+      data: {
+        sessionId: session.id,
+        role: 'agent',
+        content: result.reply,
+        seed: turnSeed,
+        model: result.model,
+        states: JSON.stringify(result.events),
+        latencyMs: result.latencyMs,
+      },
+    });
+
+    await emitEvent(ctx.tenantId, 'agent.turn.completed', 'agent_runtime_session', session.id, {
+      sessionId: session.id,
+      turnId: agentTurn.id,
+      userTurnId,
+      jobId: ctx.jobId,
+      soulId: session.soulId,
+      soulVersion: session.soulVersion,
+      seed: turnSeed,
+      model: result.model,
+      latencyMs: result.latencyMs,
+      llmCalls: result.llmCalls,
+      eventCount: result.events.length,
+      consentGrantId: grant.id,
+      requestParams: result.requestParams,
+    });
+    await recordUsage(ctx.tenantId, 'llm.calls', result.llmCalls, {
+      sessionId: session.id,
+      soulId: session.soulId,
+      soulVersion: session.soulVersion,
+      turnId: agentTurn.id,
+    });
+
+    await ctx.report({ steps: steps.done('persist', `turn ${agentTurn.id}`), progress: 1 });
+    return {
+      output: {
+        turnId: agentTurn.id,
+        replyChars: result.reply.length,
+        latencyMs: result.latencyMs,
+        llmCalls: result.llmCalls,
+        seed: turnSeed,
+        requestParams: result.requestParams,
+      },
+      entities: [
+        { type: 'agent_runtime_session', id: session.id },
+        { type: 'agent_runtime_turn', id: agentTurn.id },
+      ],
+    };
+  },
+};
+
+// P6.C6 — one chat turn through the resilience stack: per-call breaker+retry
+// inside ai/zai.ts chatComplete; job-level bounded retry + dead-letter in
+// core/jobs.ts runJob wrapping this executor.
+registerExecutor(agentTurnExecutor);

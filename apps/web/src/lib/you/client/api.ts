@@ -14,6 +14,17 @@ import type {
 // import keeps the client drift-free against the server's templateView shape
 // and is fully erased at compile time (no server code reaches the bundle).
 import type { TemplateView } from '../core/templates';
+// P6.C6 — Agent Body/Soul production runtime view types (lane-owned by
+// lib/you/agent/runtime-core, the core/templates.ts TemplateView precedent:
+// type-only import keeps the client drift-free against the server's view
+// shapes and is fully erased at compile time — no server code in the bundle).
+import type {
+  AgentRuntimeBodyView,
+  AgentRuntimeSessionSummaryView,
+  AgentRuntimeSessionView,
+  AgentRuntimeSoulView,
+  AgentRuntimeTurnView,
+} from '../agent/runtime-core';
 
 const BASE = '/api/v1';
 
@@ -294,6 +305,51 @@ export const api = {
       call<{ turn: AgentAvatarSessionView['turns'][number]; events: AgentAvatarSessionView['turns'][number]['states'] }>(
         `/agent-avatar-sessions/${id}/events`, { method: 'POST', body: JSON.stringify({ message }) }),
     endSession: (id: string) => call<void>(`/agent-avatar-sessions/${id}`, { method: 'DELETE' }),
+  },
+
+  // ─── Agent Body/Soul production runtime (P6.C6) ───────────────────────────
+  // Bodies: visual/physical avatar assets bound to a TwinVersion. Souls:
+  // personality/behavior configuration bound to a Twin. Sessions bind
+  // (Twin, Body, Soul) with consent provenance; turns run as durable
+  // agent.turn jobs through the resilience stack.
+  agentRuntime: {
+    bodies: () => call<AgentRuntimeBodyView[]>('/agent/bodies'),
+    createBody: (
+      body: { name: string; role: string; description?: string; twinId?: string; tools?: string[]; capabilities?: string[] },
+      idem?: string,
+    ) => call<AgentRuntimeBodyView>('/agent/bodies', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    getBody: (id: string) => call<AgentRuntimeBodyView & { versions: { version: number; createdAt: string; snapshot: Record<string, unknown> }[] }>(`/agent/bodies/${id}`),
+    updateBody: (
+      id: string,
+      body: { action?: 'activate' | 'deactivate'; name?: string; role?: string; description?: string | null; twinId?: string | null; tools?: string[]; capabilities?: string[] },
+      idem?: string,
+    ) => call<AgentRuntimeBodyView>(`/agent/bodies/${id}`, { method: 'PATCH', body: JSON.stringify(body), idempotencyKey: idem }),
+
+    souls: () => call<AgentRuntimeSoulView[]>('/agent/souls'),
+    createSoul: (
+      body: {
+        name: string; description?: string; twinId: string;
+        persona?: { tagline?: string; traits?: string[]; speakingStyle?: string; additionalInstructions?: string };
+        provider?: string; model: string; params?: { thinking?: boolean; temperature?: number };
+        capabilities?: string[];
+      },
+      idem?: string,
+    ) => call<AgentRuntimeSoulView>('/agent/souls', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    getSoul: (id: string) => call<AgentRuntimeSoulView & { versions: { version: number; createdAt: string; snapshot: Record<string, unknown> }[] }>(`/agent/souls/${id}`),
+    updateSoul: (
+      id: string,
+      body: { action?: 'activate' | 'deactivate'; name?: string; description?: string | null; persona?: Record<string, unknown>; params?: Record<string, unknown>; capabilities?: string[] },
+      idem?: string,
+    ) => call<AgentRuntimeSoulView>(`/agent/souls/${id}`, { method: 'PATCH', body: JSON.stringify(body), idempotencyKey: idem }),
+
+    sessions: () => call<AgentRuntimeSessionSummaryView[]>('/agent/sessions'),
+    createSession: (body: { bodyId: string; soulId: string }, idem?: string) =>
+      call<AgentRuntimeSessionView>('/agent/sessions', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    getSession: (id: string) => call<AgentRuntimeSessionView>(`/agent/sessions/${id}`),
+    sendTurn: (id: string, message: string, idem?: string) =>
+      call<{ jobId: string; turn: AgentRuntimeTurnView; replayed?: boolean }>(
+        `/agent/sessions/${id}/turns`, { method: 'POST', body: JSON.stringify({ message }), idempotencyKey: idem }),
+    endSession: (id: string) => call<void>(`/agent/sessions/${id}`, { method: 'DELETE' }),
   },
 
   // ─── Lab ──────────────────────────────────────────────────────────────────

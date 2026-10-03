@@ -39,6 +39,9 @@ model Tenant {
   avatarSessions AgentAvatarSession[]
   verificationSessions VerificationSession[]
   templates      Template[]
+  runtimeBodies  AgentRuntimeBody[]
+  runtimeSouls   AgentRuntimeSoul[]
+  runtimeSessions AgentRuntimeSession[]
 }
 
 model User {
@@ -220,6 +223,8 @@ model Twin {
   performances    Performance[]
   renderJobs      RenderJob[]
   avatarSessions  AgentAvatarSession[]
+  runtimeSouls    AgentRuntimeSoul[]
+  runtimeSessions AgentRuntimeSession[]
 }
 
 model TwinVersion {
@@ -240,6 +245,7 @@ model TwinVersion {
   solutions        SolutionArtifact[]
   feedbacks        FeedbackRequest[]
   evidenceRequests EvidenceRequest[]
+  runtimeBodies   AgentRuntimeBody[]
 
   @@unique([twinId, version])
 }
@@ -641,6 +647,118 @@ model AgentAvatarTurn {
   createdAt DateTime @default(now())
 
   session AgentAvatarSession @relation(fields: [sessionId], references: [id])
+}
+
+// ─── Agent Body/Soul production runtime (P6.C6) ─────────────────────────────
+// Bodies: visual/physical avatar assets bound to a TwinVersion (+ the ADR-0002
+// role/tool contract). Souls: personality/behavior configuration bound to a
+// Twin. Lifecycle: draft → active ⇄ inactive; definition edits append an
+// IMMUTABLE version snapshot (AgentRuntime*Version) so sessions stay pinned
+// to the exact definitions they bound (reproducibility law). The legacy
+// AgentBody/AgentSoulBinding/AgentAvatarSession models above are untouched
+// (frozen surface); this is the separate production runtime.
+
+model AgentRuntimeBody {
+  id            String   @id @default(cuid())
+  tenantId      String
+  name          String
+  role          String
+  description   String?
+  twinVersionId String? // visual/physical avatar assets binding (null = abstract body)
+  version       Int      @default(1)
+  status        String   @default("draft") // draft | active | inactive
+  tools         String   @default("[]") // JSON: tool allow-list (W2.C registry names)
+  manifest      String   @default("{}") // JSON: honest capability manifest { can, cannot }
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant      Tenant                     @relation(fields: [tenantId], references: [id])
+  twinVersion TwinVersion?               @relation(fields: [twinVersionId], references: [id])
+  versions    AgentRuntimeBodyVersion[]
+  sessions    AgentRuntimeSession[]
+}
+
+model AgentRuntimeBodyVersion {
+  id        String   @id @default(cuid())
+  bodyId    String
+  version   Int
+  snapshot  String // JSON: immutable definition { name, role, description, twinVersionId, tools, manifest }
+  createdAt DateTime @default(now())
+
+  body AgentRuntimeBody @relation(fields: [bodyId], references: [id], onDelete: Cascade)
+
+  @@unique([bodyId, version])
+}
+
+model AgentRuntimeSoul {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  twinId      String // a Soul is personality/behavior configuration bound to a Twin
+  persona     String   @default("{}") // JSON: { tagline, traits, speakingStyle, additionalInstructions }
+  provider    String   @default("zai") // chat adapter id (wave-1: zai seam only)
+  model       String // declared model binding (recorded provenance)
+  params      String   @default("{}") // JSON: { thinking?, temperature? } — behavior configuration
+  seed        Int // determinism base seed (immutable after create; recorded on sessions/turns)
+  version     Int      @default(1)
+  status      String   @default("draft") // draft | active | inactive
+  manifest    String   @default("{}") // JSON: honest capability manifest { can, cannot }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant                    @relation(fields: [tenantId], references: [id])
+  twin     Twin                      @relation(fields: [twinId], references: [id])
+  versions AgentRuntimeSoulVersion[]
+  sessions AgentRuntimeSession[]
+}
+
+model AgentRuntimeSoulVersion {
+  id        String   @id @default(cuid())
+  soulId    String
+  version   Int
+  snapshot  String // JSON: immutable definition { name, description, twinId, persona, provider, model, params, manifest, seed }
+  createdAt DateTime @default(now())
+
+  soul AgentRuntimeSoul @relation(fields: [soulId], references: [id], onDelete: Cascade)
+
+  @@unique([soulId, version])
+}
+
+model AgentRuntimeSession {
+  id             String    @id @default(cuid())
+  tenantId       String
+  twinId         String // session binds (Twin, Body, Soul) — twin derived from the Soul, validated against the Body
+  bodyId         String
+  bodyVersion    Int // pinned Body definition version at bind time
+  soulId         String
+  soulVersion    Int // pinned Soul definition version at bind time
+  consentGrantId String? // consent provenance: the embodiment grant covering the bind (re-verified per turn)
+  seed           Int // session base seed (turn seeds derive deterministically)
+  status         String    @default("live") // live | ended
+  createdAt      DateTime  @default(now())
+  endedAt        DateTime?
+
+  tenant Tenant             @relation(fields: [tenantId], references: [id])
+  twin   Twin               @relation(fields: [twinId], references: [id])
+  body   AgentRuntimeBody   @relation(fields: [bodyId], references: [id])
+  soul   AgentRuntimeSoul   @relation(fields: [soulId], references: [id])
+  turns  AgentRuntimeTurn[]
+}
+
+model AgentRuntimeTurn {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String // user | agent
+  content   String
+  seed      Int? // recorded per turn — the seed that parameterized the agent turn's request
+  model     String? // model binding recorded on agent turns (provenance)
+  states    String   @default("[]") // JSON: AgentPerformanceEvent[] emitted for this turn
+  latencyMs Int?
+  jobId     String? // the durable agent.turn job driving this exchange (user turns)
+  createdAt DateTime @default(now())
+
+  session AgentRuntimeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }
 
 // ─── Usage metering ─────────────────────────────────────────────────────────

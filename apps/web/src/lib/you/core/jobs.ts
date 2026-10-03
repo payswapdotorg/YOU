@@ -22,7 +22,7 @@ import { bumpCounter } from './metrics';
  * The value flows through Job.kind rows/views unchanged; TL should add the
  * union member at landing (see w2a-report.md compatibility notes).
  */
-export type DurableJobKind = JobKind | 'template.analyze' | 'f1.reconstruct';
+export type DurableJobKind = JobKind | 'template.analyze' | 'f1.reconstruct' | 'agent.turn';
 
 /**
  * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
@@ -96,6 +96,17 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'analyze', label: 'Per-asset VLM analysis (registry-resolved)' },
     { key: 'report', label: 'Aggregate F1 reconstruction report' },
     { key: 'persist', label: 'Publish TwinVersion with F1 provenance' },
+  ],
+  // P6.C6 — Agent Body/Soul production runtime: one chat turn. Short-lived
+  // per-LLM-call retries + breaker live inside the chat seam (ai/zai.ts);
+  // this job-level retry wraps the whole turn and dead-letters exhausted
+  // retryable failures (the honest 'retry then deadletter' path).
+  'agent.turn': [
+    { key: 'load', label: 'Load session, pinned Body/Soul snapshots and history' },
+    { key: 'consent', label: 'Re-verify embodiment consent (server-enforced, fail-closed)' },
+    { key: 'enforce', label: 'Capability manifests (server-side enforcement)' },
+    { key: 'reply', label: 'Run the Soul (LLM turns + bounded tool rounds)' },
+    { key: 'persist', label: 'Persist agent turn with events, seed and latency' },
   ],
 };
 
