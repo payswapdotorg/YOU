@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/table';
 import { IdChip, PageHeader, SectionCard, StatusBadge, EmptyState } from '@/components/you/shared/primitives';
 import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
+import { QueryError } from '@/components/you/build/confidence';
 import { JobSteps } from '@/components/you/lab/job-steps';
 import { TrackTimeline, fmtMs } from '@/components/you/artifact/track-timeline';
 
@@ -44,16 +45,6 @@ const ORIGIN_BADGES: Record<string, string> = {
 function rel(iso?: string | null): string {
   if (!iso) return '—';
   try { return formatDistanceToNow(new Date(iso), { addSuffix: true }); } catch { return iso; }
-}
-
-function ErrorNote({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  const msg = error instanceof YouApiError ? error.message : 'Request failed';
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-      <span>Couldn’t load performances — {msg}</span>
-      <Button size="sm" variant="outline" onClick={onRetry} className="h-7">Retry</Button>
-    </div>
-  );
 }
 
 function PerformanceDetailDialog({
@@ -89,10 +80,7 @@ function PerformanceDetailDialog({
             <Skeleton className="h-6 w-5/6" />
           </div>
         ) : isError ? (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-            <span>Couldn’t load performance — {error instanceof YouApiError ? error.message : 'request failed'}</span>
-            <Button size="sm" variant="outline" className="h-7" onClick={() => refetch()}>Retry</Button>
-          </div>
+          <QueryError error={error} compact onRetry={() => void refetch()} title="Couldn’t load performance" />
         ) : data ? (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -192,13 +180,24 @@ export function PerformancesView() {
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Attach twin (optional)</Label>
-                <Select value={twinId} onValueChange={setTwinId}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                {/* Pending honesty: while the twins query is in flight the select
+                    shows a loading placeholder instead of a stale "No twin"
+                    default — the post-load default ('none') is unchanged. */}
+                <Select value={twins.isPending ? undefined : twinId} onValueChange={setTwinId}>
+                  <SelectTrigger className="h-9" aria-label="Attach twin (optional)">
+                    <SelectValue placeholder="Loading twins…" />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No twin — identity-independent</SelectItem>
-                    {twins.data?.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
-                    )) ?? null}
+                    {twins.isPending ? (
+                      <SelectItem value="loading" disabled>Loading twins…</SelectItem>
+                    ) : (
+                      <>
+                        <SelectItem value="none">No twin — identity-independent</SelectItem>
+                        {twins.data?.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
+                        )) ?? null}
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
                 {twins.isError ? (
@@ -258,7 +257,12 @@ export function PerformancesView() {
               {[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
             </div>
           ) : performances.isError ? (
-            <ErrorNote error={performances.error} onRetry={() => performances.refetch()} />
+            <QueryError
+              error={performances.error}
+              compact
+              onRetry={() => void performances.refetch()}
+              title="Couldn’t load performances"
+            />
           ) : !performances.data?.length ? (
             <EmptyState
               icon={Drama}
@@ -282,8 +286,12 @@ export function PerformancesView() {
                   {performances.data.map((p: PerformanceView) => (
                     <TableRow
                       key={p.id}
-                      className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open performance ${p.name}`}
+                      className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       onClick={() => setSelected(p.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id); } }}
                     >
                       <TableCell className="max-w-44 truncate font-medium">{p.name}</TableCell>
                       <TableCell>

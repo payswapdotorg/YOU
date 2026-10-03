@@ -23,7 +23,7 @@ import { api } from '@/lib/you/client/api';
 import type { ConsentGrantView } from '@/lib/you/contracts';
 import {
   Activity, BookOpen, Box, FileClock, Fingerprint, Gauge, HeartPulse, History, KeyRound,
-  Loader2, Lock, MessageSquareOff, Scale, ScanFace, Search, ShieldCheck, Unplug,
+  Loader2, Lock, MessageSquareOff, Plus, Scale, ScanFace, Search, ShieldCheck, Unplug,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -51,6 +51,7 @@ function ScopeBadges({ scopes }: { scopes: ConsentGrantView['scopes'] }) {
 
 function ConsentTab() {
   const qc = useQueryClient();
+  const navigate = useYouStore((s) => s.navigate);
   const grantsQ = useQuery({ queryKey: ['consent'], queryFn: api.consent.list });
   const [revokeId, setRevokeId] = useState<string | null>(null);
 
@@ -92,6 +93,11 @@ function ConsentTab() {
           icon={ShieldCheck}
           title="No consent grants yet"
           hint="Grants are created when you create a twin (the consent gate) or unblock a consent-gated capture."
+          action={(
+            <Button size="sm" className="gap-1.5" onClick={() => navigate('twins', { action: 'create' })}>
+              <Plus className="size-3.5" aria-hidden /> Create Twin
+            </Button>
+          )}
         />
       ) : (
         <div className="rounded-xl border bg-card shadow-sm">
@@ -269,7 +275,7 @@ function ProvenanceTab() {
                 </span>
               </div>
               {payloadSummary(e.payload) ? (
-                <p className="mt-1 truncate font-mono text-[10.5px] text-muted-foreground/70" title={payloadSummary(e.payload, 400)}>
+                <p className="mt-1 truncate font-mono text-[10.5px] text-muted-foreground" title={payloadSummary(e.payload, 400)}>
                   {payloadSummary(e.payload)}
                 </p>
               ) : null}

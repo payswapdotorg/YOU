@@ -16,7 +16,11 @@ export interface ViewParams {
 
 interface YouAppState {
   session: SessionInfo | null;
+  // P6.B2 — honest bootstrap-failure surface: set when BOTH session.get and
+  // session.create failed at shell startup; cleared by any successful setSession.
+  sessionError: string | null;
   setSession: (s: SessionInfo | null) => void;
+  setSessionError: (message: string | null) => void;
   view: ViewId;
   params: ViewParams | null;
   navigate: (view: ViewId, params?: ViewParams) => void;
@@ -26,7 +30,9 @@ interface YouAppState {
 
 export const useYouStore = create<YouAppState>((set) => ({
   session: null,
-  setSession: (session) => set({ session }),
+  sessionError: null,
+  setSession: (session) => set({ session, sessionError: null }),
+  setSessionError: (sessionError) => set({ sessionError }),
   view: 'overview',
   params: null,
   navigate: (view, params) => set({ view, params: params ?? null }),

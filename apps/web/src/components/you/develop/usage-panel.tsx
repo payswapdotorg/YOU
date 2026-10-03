@@ -6,13 +6,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Activity, Camera, ImageIcon, Loader2, MessageSquare, RefreshCcw } from 'lucide-react';
-import { api, YouApiError } from '@/lib/you/client/api';
+import { api } from '@/lib/you/client/api';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { EmptyState, SectionCard } from '@/components/you/shared/primitives';
+import { QueryError } from '@/components/you/build/confidence';
 
 export function UsagePanel({ showTable = true }: { showTable?: boolean }) {
   const usage = useQuery({ queryKey: ['develop-usage'], queryFn: () => api.develop.usage() });
@@ -29,10 +30,12 @@ export function UsagePanel({ showTable = true }: { showTable?: boolean }) {
   }
   if (usage.isError) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-        <span>Couldn’t load usage — {usage.error instanceof YouApiError ? usage.error.message : 'request failed'}</span>
-        <Button size="sm" variant="outline" className="h-7" onClick={() => usage.refetch()}>Retry</Button>
-      </div>
+      <QueryError
+        error={usage.error}
+        compact
+        onRetry={() => void usage.refetch()}
+        title="Couldn’t load usage"
+      />
     );
   }
 

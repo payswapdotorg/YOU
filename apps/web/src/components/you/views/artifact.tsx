@@ -32,6 +32,7 @@ import { TrackTimeline } from '@/components/you/artifact/track-timeline';
 import { VersionCompare } from '@/components/you/artifact/version-compare';
 import { ProvenanceChain } from '@/components/you/artifact/provenance-chain';
 import { ApiSnippets } from '@/components/you/artifact/api-snippets';
+import { QueryError, RowSkeletons } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
 
 const FALLBACK_VERDICTS = [
@@ -324,7 +325,7 @@ function DeficiencyFeedbackRow({
         <div className="space-y-1">
           <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Verdict</Label>
           <Select value={verdict || undefined} onValueChange={setVerdict}>
-            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="select verdict" /></SelectTrigger>
+            <SelectTrigger className="h-8 text-xs" aria-label={`Verdict for ${d.capability}`}><SelectValue placeholder="select verdict" /></SelectTrigger>
             <SelectContent>
               {verdicts.map((v) => <SelectItem key={v} value={v} className="font-mono text-xs">{v}</SelectItem>)}
             </SelectContent>
@@ -333,7 +334,7 @@ function DeficiencyFeedbackRow({
         <div className="space-y-1">
           <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Region (optional)</Label>
           <Select value={region || undefined} onValueChange={setRegion}>
-            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="select region" /></SelectTrigger>
+            <SelectTrigger className="h-8 text-xs" aria-label={`Region for ${d.capability}`}><SelectValue placeholder="select region" /></SelectTrigger>
             <SelectContent>
               {regions.map((r) => (
                 <SelectItem key={r} value={r === 'custom' ? FREE_TEXT_REGION : r} className="font-mono text-xs">{r}</SelectItem>
@@ -363,10 +364,11 @@ function DeficiencyFeedbackRow({
 }
 
 function ImproveTab({
-  artifact, twinVersion,
+  artifact, twinVersion, twinVersionPending,
 }: {
   artifact: SolutionArtifactView;
   twinVersion: TwinVersionView | null;
+  twinVersionPending: boolean;
 }) {
   const navigate = useYouStore((s) => s.navigate);
   const m = artifact.manifest;
@@ -420,6 +422,8 @@ function ImproveTab({
             title="No TwinVersion reference"
             hint="Feedback references an artifact/TwinVersion (SOLUTION_ARTIFACT.md). This artifact type doesn’t carry one, so verdict-based feedback isn’t applicable — targeted evidence requests below may still apply."
           />
+        ) : twinVersionPending ? (
+          <RowSkeletons rows={2} />
         ) : !twinVersion ? (
           <p className="text-sm text-muted-foreground">
             The referenced version could not be loaded for feedback — it may belong to a deleted twin.
@@ -476,7 +480,7 @@ function ImproveTab({
               <div className="space-y-1.5">
                 <Label className="text-xs">Capability</Label>
                 <Select value={capability || undefined} onValueChange={setCapability}>
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Select capability" /></SelectTrigger>
+                  <SelectTrigger className="h-9" aria-label="Capability"><SelectValue placeholder="Select capability" /></SelectTrigger>
                   <SelectContent>
                     {capabilities.map((c) => <SelectItem key={c} value={c} className="font-mono text-xs">{c}</SelectItem>)}
                   </SelectContent>
@@ -536,10 +540,12 @@ function PerformanceTab({ performanceId, name }: { performanceId: string; name: 
           <Skeleton className="h-6 w-2/3" />
         </div>
       ) : performance.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load the performance — {performance.error instanceof YouApiError ? performance.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => performance.refetch()}>Retry</Button>
-        </div>
+        <QueryError
+          error={performance.error}
+          compact
+          onRetry={() => void performance.refetch()}
+          title="Could not load the performance"
+        />
       ) : (
         <div className="space-y-4">
           <TrackTimeline tracks={performance.data.tracks} durationMs={performance.data.durationMs} />
@@ -592,6 +598,11 @@ export function ArtifactView() {
       ?? versions.data.find((v: TwinVersionView) => v.version === target.version)
       ?? null;
   }, [versions.data, m]);
+
+  // Mirrors the versions query's enable condition — a disabled query stays
+  // isPending forever in React Query v5, so the enable conjuncts keep a
+  // disabled query from wedging the ImproveTab skeleton.
+  const twinVersionPending = !!twinId && !!m?.twinVersion && versions.isPending;
 
   if (!artifactId) {
     return (
@@ -694,7 +705,9 @@ export function ArtifactView() {
           </TabsContent>
         ) : null}
         <TabsContent value="evidence" className="mt-4"><EvidenceTab artifact={data} /></TabsContent>
-        <TabsContent value="improve" className="mt-4"><ImproveTab artifact={data} twinVersion={twinVersion} /></TabsContent>
+        <TabsContent value="improve" className="mt-4">
+          <ImproveTab artifact={data} twinVersion={twinVersion} twinVersionPending={twinVersionPending} />
+        </TabsContent>
         {data.manifest.performance ? (
           <TabsContent value="performance" className="mt-4">
             <PerformanceTab performanceId={data.manifest.performance.id} name={data.manifest.performance.name} />

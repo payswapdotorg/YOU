@@ -39,6 +39,7 @@ import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/deg
 import { GenomeViewer } from '@/components/you/lab/genome-viewer';
 import { BenchmarkRunResults } from '@/components/you/lab/run-results';
 import { JobSteps } from '@/components/you/lab/job-steps';
+import { QueryError, RowSkeletons } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
 
 const TABS = ['objectives', 'technologies', 'pipelines', 'benchmarks', 'failures', 'promotions'] as const;
@@ -146,7 +147,7 @@ function CreateObjectiveDialog() {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3.5">
-          <div className="grid grid-cols-[1fr_1.6fr] gap-3">
+          <div className="grid gap-3 sm:grid-cols-[1fr_1.6fr]">
             <div className="space-y-1.5">
               <Label className="text-xs">Code</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="RECON-002" className="h-9 font-mono text-xs" />
@@ -227,10 +228,12 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
       {objectives.isPending ? (
         <Skeleton className="h-44 w-full rounded-xl" />
       ) : objectives.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load objectives — {objectives.error instanceof YouApiError ? objectives.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => objectives.refetch()}>Retry</Button>
-        </div>
+        <QueryError
+          error={objectives.error}
+          compact
+          onRetry={() => void objectives.refetch()}
+          title="Could not load objectives"
+        />
       ) : !objectives.data?.length ? (
         <EmptyState
           icon={FlaskConical}
@@ -293,7 +296,7 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
             <div className="space-y-1.5">
               <Label className="text-xs">Objective</Label>
               <Select value={effectiveCode || undefined} onValueChange={setObjectiveCode}>
-                <SelectTrigger className="h-9">
+                <SelectTrigger className="h-9" aria-label="Objective">
                   <SelectValue placeholder={objectives.data?.length ? 'Select objective' : 'No objectives'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -353,10 +356,12 @@ function ObjectivesTab({ onRunStarted }: { onRunStarted: (runId: string) => void
                   <Skeleton className="h-40 w-full" />
                 </div>
               ) : runQuery.isError ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-                  <span>Couldn’t load run — {runQuery.error instanceof YouApiError ? runQuery.error.message : 'request failed'}</span>
-                  <Button size="sm" variant="outline" className="h-7" onClick={() => runQuery.refetch()}>Retry</Button>
-                </div>
+                <QueryError
+                  error={runQuery.error}
+                  compact
+                  onRetry={() => void runQuery.refetch()}
+                  title="Could not load run"
+                />
               ) : runQuery.data ? (
                 <>
                   <BenchmarkRunResults run={runQuery.data} />
@@ -402,10 +407,12 @@ function TechnologiesTab() {
       {technologies.isPending ? (
         <div className="space-y-2.5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : technologies.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load the registry — {technologies.error instanceof YouApiError ? technologies.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => technologies.refetch()}>Retry</Button>
-        </div>
+        <QueryError
+          error={technologies.error}
+          compact
+          onRetry={() => void technologies.refetch()}
+          title="Could not load the registry"
+        />
       ) : !technologies.data?.length ? (
         <EmptyState
           icon={Dna}
@@ -431,7 +438,19 @@ function TechnologiesTab() {
                 const open = expanded.has(t.id);
                 return (
                   <Fragment key={t.id}>
-                    <TableRow className="cursor-pointer" onClick={() => toggle(t.id)}>
+                    <TableRow
+                      className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      onClick={() => toggle(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggle(t.id);
+                        }
+                      }}
+                    >
                       <TableCell className="w-8">
                         <ChevronDown className={cn('size-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} aria-hidden />
                       </TableCell>
@@ -544,10 +563,12 @@ function PipelinesTab() {
       {pipelines.isPending ? (
         <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>
       ) : pipelines.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load pipelines — {pipelines.error instanceof YouApiError ? pipelines.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => pipelines.refetch()}>Retry</Button>
-        </div>
+        <QueryError
+          error={pipelines.error}
+          compact
+          onRetry={() => void pipelines.refetch()}
+          title="Could not load pipelines"
+        />
       ) : !pipelines.data?.length ? (
         <EmptyState
           icon={GitBranch}
@@ -562,7 +583,7 @@ function PipelinesTab() {
               <div key={p.id} className="rounded-lg border bg-card">
                 <button
                   type="button"
-                  className="flex w-full flex-wrap items-center gap-2 px-3.5 py-3 text-left"
+                  className="you-focus flex w-full flex-wrap items-center gap-2 px-3.5 py-3 text-left"
                   onClick={() => setOpen(expanded ? null : p.id)}
                   aria-expanded={expanded}
                 >
@@ -630,14 +651,23 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
         description="Runs started in this window, plus runs discovered from the tenant event log (API v1 has no list-runs endpoint)."
         icon={FlaskConical}
       >
-        {runs.isPending && candidateIds.length ? (
-          <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+        {events.isPending || (runs.isPending && candidateIds.length > 0) ? (
+          <RowSkeletons rows={2} />
         ) : !runs.data?.length ? (
-          <EmptyState
-            icon={FlaskConical}
-            title="No benchmark runs discovered"
-            hint="Run a benchmark from the Objectives tab — it compares a generalist baseline, a hand-designed organization and the searched candidate on a seeded world."
-          />
+          events.isError ? (
+            <QueryError
+              error={events.error}
+              compact
+              onRetry={() => void events.refetch()}
+              title="Could not load benchmark runs"
+            />
+          ) : (
+            <EmptyState
+              icon={FlaskConical}
+              title="No benchmark runs discovered"
+              hint="Run a benchmark from the Objectives tab — it compares a generalist baseline, a hand-designed organization and the searched candidate on a seeded world."
+            />
+          )
         ) : (
           <div className="max-h-72 you-scroll overflow-y-auto rounded-lg border">
             <Table>
@@ -654,7 +684,19 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
               </TableHeader>
               <TableBody>
                 {runs.data.map((r: BenchmarkRunView) => (
-                  <TableRow key={r.id} className="cursor-pointer" onClick={() => setSelected(r.id)}>
+                  <TableRow
+                    key={r.id}
+                    className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelected(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelected(r.id);
+                      }
+                    }}
+                  >
                     <TableCell><IdChip id={r.id} label="run" /></TableCell>
                     <TableCell className="font-mono text-xs">{r.objectiveCode}</TableCell>
                     <TableCell className="you-num font-mono text-xs">{r.worldSeed}</TableCell>
@@ -680,10 +722,12 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
               <Skeleton className="h-32 w-full" />
             </div>
           ) : selectedRun.isError ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-              <span>Couldn’t load run — {selectedRun.error instanceof YouApiError ? selectedRun.error.message : 'request failed'}</span>
-              <Button size="sm" variant="outline" className="h-7" onClick={() => selectedRun.refetch()}>Retry</Button>
-            </div>
+            <QueryError
+              error={selectedRun.error}
+              compact
+              onRetry={() => void selectedRun.refetch()}
+              title="Could not load run"
+            />
           ) : selectedRun.data ? (
             <BenchmarkRunResults run={selectedRun.data} />
           ) : null}
@@ -711,10 +755,12 @@ function FailuresTab() {
       {failures.isPending ? (
         <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : failures.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load failure cases — {failures.error instanceof YouApiError ? failures.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => failures.refetch()}>Retry</Button>
-        </div>
+        <QueryError
+          error={failures.error}
+          compact
+          onRetry={() => void failures.refetch()}
+          title="Could not load failure cases"
+        />
       ) : !failures.data?.length ? (
         <EmptyState
           icon={AlertTriangle}
@@ -789,10 +835,12 @@ function PromotionsTab() {
         {promotions.isPending ? (
           <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
         ) : promotions.isError ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-            <span>Couldn’t load promotions — {promotions.error instanceof YouApiError ? promotions.error.message : 'request failed'}</span>
-            <Button size="sm" variant="outline" className="h-7" onClick={() => promotions.refetch()}>Retry</Button>
-          </div>
+          <QueryError
+            error={promotions.error}
+            compact
+            onRetry={() => void promotions.refetch()}
+            title="Could not load promotions"
+          />
         ) : !promotions.data?.length ? (
           <EmptyState
             icon={Trophy}

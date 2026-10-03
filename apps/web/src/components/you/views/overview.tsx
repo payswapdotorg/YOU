@@ -60,12 +60,12 @@ function StatTile({
       <div className="you-num mt-2.5 text-[26px] font-semibold leading-none tracking-tight">
         {loading ? <Skeleton className="h-7 w-12" /> : value}
       </div>
-      <div className="mt-2 text-[11px] text-muted-foreground/80">{hint}</div>
+      <div className="mt-2 text-[11px] text-muted-foreground">{hint}</div>
     </>
   );
   const cls = 'rounded-xl border bg-card p-5 text-left shadow-sm transition-all';
   return onClick ? (
-    <button type="button" onClick={onClick} className={cn(cls, 'hover:border-foreground/20 hover:shadow')}>
+    <button type="button" onClick={onClick} className={cn(cls, 'you-focus hover:border-foreground/20 hover:shadow')}>
       {body}
     </button>
   ) : (
@@ -97,7 +97,7 @@ function PipelineSection({ pipeline, navigate }: {
                   onClick={() => navigate(stageTarget(stage.stage))}
                   aria-label={`Go to ${stage.stage} (${stage.count})`}
                   className={cn(
-                    'w-44 rounded-lg border bg-card p-3.5 text-left transition-all hover:border-foreground/20 hover:shadow',
+                    'you-focus w-44 rounded-lg border bg-card p-3.5 text-left transition-all hover:border-foreground/20 hover:shadow',
                     blocked && 'border-emerald-500/50 bg-emerald-500/[0.04] ring-1 ring-emerald-500/25',
                   )}
                 >
@@ -149,8 +149,8 @@ function GetStarted({ navigate }: { navigate: ReturnType<typeof useYouStore.getS
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[13px] font-medium">{step.title}</span>
                 {step.action ? (
-                  <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[11px]" onClick={step.action.run}>
-                    <Plus className="size-3" aria-hidden /> {step.action.label}
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={step.action.run}>
+                    <Plus className="size-3.5" aria-hidden /> {step.action.label}
                   </Button>
                 ) : null}
               </div>
@@ -266,7 +266,7 @@ export function OverviewView() {
                       <span className="font-medium">{e.entityType}</span>
                       {e.entityId ? <span className="ml-1.5 font-mono text-[10.5px] text-muted-foreground">{e.entityId.slice(0, 14)}…</span> : null}
                       {payloadSummary(e.payload) ? (
-                        <span className="ml-2 font-mono text-[10.5px] text-muted-foreground/70">{payloadSummary(e.payload, 70)}</span>
+                        <span className="ml-2 font-mono text-[10.5px] text-muted-foreground">{payloadSummary(e.payload, 70)}</span>
                       ) : null}
                     </span>
                     <span className="you-num shrink-0 text-[11px] text-muted-foreground" title={e.createdAt}>{timeAgo(e.createdAt)}</span>
@@ -275,7 +275,7 @@ export function OverviewView() {
                 return (
                   <li key={e.id}>
                     {target ? (
-                      <button type="button" className="w-full text-left" onClick={() => navigate(target)} aria-label={`Open ${e.entityType} in ${target}`}>
+                      <button type="button" className="you-focus w-full text-left" onClick={() => navigate(target)} aria-label={`Open ${e.entityType} in ${target}`}>
                         {row}
                       </button>
                     ) : row}

@@ -114,8 +114,14 @@ export function CapturesView() {
                   return (
                     <TableRow
                       key={session.id}
-                      className="cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open capture session ${session.id}`}
+                      className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       onClick={() => setOpenId(session.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(session.id); }
+                      }}
                     >
                       <TableCell><IdChip id={session.id} label="" /></TableCell>
                       <TableCell className="max-w-40">

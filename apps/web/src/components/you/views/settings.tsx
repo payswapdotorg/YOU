@@ -3,14 +3,36 @@
 // Settings — read-only profile & environment facts for the local deployment,
 // plus the Twin deletion policy (danger zone, informational).
 // ═══════════════════════════════════════════════════════════════════════════
-import { AlertTriangle, Building2, Database, HardDrive, KeySquare, Moon, Palette, ShieldCheck, UserRound } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, Building2, Database, HardDrive, KeySquare, Moon, Palette, RotateCw, ShieldCheck, UserRound } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import { KeyValue, PageHeader, SectionCard } from '@/components/you/shared/primitives';
 import { SettingsOps } from '@/components/you/views/settings-ops';
 import { useYouStore } from '@/hooks/you/use-you-store';
+import { api } from '@/lib/you/client/api';
 
 export function SettingsView() {
   const session = useYouStore((s) => s.session);
+  const sessionError = useYouStore((s) => s.sessionError);
+  const setSession = useYouStore((s) => s.setSession);
+  const setSessionError = useYouStore((s) => s.setSessionError);
+  const [retrying, setRetrying] = useState(false);
+
+  // P6.B2 — honest bootstrap-failure retry: re-runs the same get→create
+  // cascade the shell uses at startup. A success clears the error via
+  // setSession; a failure re-renders this surface with the new reason.
+  const retryBootstrap = async () => {
+    setRetrying(true);
+    try {
+      const s = await api.session.get().catch(() => api.session.create());
+      setSession(s);
+    } catch (err) {
+      setSessionError(err instanceof Error ? err.message : 'Session bootstrap failed');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -31,6 +53,24 @@ export function SettingsView() {
                 { label: 'User id', value: <span className="font-mono text-xs text-muted-foreground">{session.user.id}</span> },
               ]}
             />
+          ) : sessionError ? (
+            <div className="space-y-2.5">
+              <p className="text-sm font-medium text-foreground">Couldn’t load the session</p>
+              <p className="text-xs text-muted-foreground">
+                Both the session lookup and the local bootstrap failed:{' '}
+                <span className="font-mono">{sessionError}</span>
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => void retryBootstrap()}
+                disabled={retrying}
+              >
+                <RotateCw className={retrying ? 'size-3.5 animate-spin' : 'size-3.5'} aria-hidden />
+                Retry
+              </Button>
+            </div>
           ) : (
             <div className="space-y-2.5">
               <Skeleton className="h-4 w-2/3" />

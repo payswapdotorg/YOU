@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
-  Activity, Ban, CircleCheck, Gauge, Inbox, Loader2, RefreshCcw, RotateCcw, Skull, Trash2,
+  Activity, Ban, CircleCheck, Gauge, Inbox, Loader2, RefreshCcw, RotateCcw, RotateCw, Skull, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, type BreakerStatusView, type DeadJobsView } from '@/lib/you/client/api';
@@ -57,12 +57,20 @@ function OperatorGateNotice({ detail }: { detail: string }) {
 }
 
 /** Shared error render for the two operator queries (403 → gate; else taxonomy). */
-function OpsQueryError({ error }: { error: unknown }) {
+function OpsQueryError({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const c = classifyApiError(error);
   if (c.kind === 'auth') return <OperatorGateNotice detail={c.detail} />;
   return (
-    <div role="alert" className="rounded-lg border border-red-500/25 bg-red-500/[0.06] px-4 py-3.5 text-xs text-red-700 dark:text-red-400">
-      {c.title} — {c.detail}
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.06] px-4 py-3.5 text-xs text-red-700 dark:text-red-400"
+    >
+      <span className="min-w-0">{c.title} — {c.detail}</span>
+      {onRetry ? (
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={onRetry}>
+          <RotateCw className="size-3.5" aria-hidden /> Retry
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -222,7 +230,7 @@ function DeadJobsCard() {
           <Skeleton className="h-16 w-full" />
         </div>
       ) : deadQ.isError ? (
-        <OpsQueryError error={deadQ.error} />
+        <OpsQueryError error={deadQ.error} onRetry={() => void deadQ.refetch()} />
       ) : deadQ.data && deadQ.data.jobs.length > 0 ? (
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">
@@ -329,7 +337,7 @@ function BreakersCard() {
           <Skeleton className="h-20 w-full" />
         </div>
       ) : metricsQ.isError ? (
-        <OpsQueryError error={metricsQ.error} />
+        <OpsQueryError error={metricsQ.error} onRetry={() => void metricsQ.refetch()} />
       ) : (
         <div className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2">

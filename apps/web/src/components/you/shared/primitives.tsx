@@ -100,7 +100,7 @@ export function IdChip({ id, label, className }: { id: string; label?: string; c
         }).catch(() => toast.error('Copy failed'));
       }}
       className={cn(
-        'group inline-flex max-w-full items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground',
+        'you-focus group inline-flex max-w-full items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground',
         className,
       )}
       title={`Copy ${label ?? 'ID'}`}

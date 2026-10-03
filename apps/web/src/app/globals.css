@@ -178,3 +178,15 @@ body::-webkit-scrollbar-thumb:hover {
 
 /* Tabular numerics for IDs/metrics */
 .you-num { font-variant-numeric: tabular-nums; }
+
+/* You-focus — designed keyboard-focus ring for custom interactive surfaces
+   (chips, rows, icon toggles) that don't get ui/button's focus-visible ring.
+   Box-shadow follows border-radius, so it composes with any shape. */
+.you-focus {
+  outline: none;
+}
+.you-focus:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--ring);
+}

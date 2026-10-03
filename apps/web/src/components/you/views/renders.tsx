@@ -9,7 +9,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { ImageIcon, Loader2, Plus, RefreshCcw, Video, Wand2, FileBox } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, uid, YouApiError } from '@/lib/you/client/api';
+import { api, uid } from '@/lib/you/client/api';
 import type { RenderJobView, RenderStyle, TwinView, TwinVersionView } from '@/lib/you/contracts';
 import { useJob } from '@/hooks/you/use-job';
 import { useYouStore } from '@/hooks/you/use-you-store';
@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/table';
 import { EmptyState, IdChip, KeyValue, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
 import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
+import { QueryError } from '@/components/you/build/confidence';
 import { JobSteps } from '@/components/you/lab/job-steps';
 
 const STYLES: RenderStyle[] = [
@@ -150,11 +151,11 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3.5">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Twin</Label>
               <Select value={twinId || undefined} onValueChange={(v) => { setTwinId(v); setVersionId(''); }}>
-                <SelectTrigger className="h-9"><SelectValue placeholder={twins.isPending ? 'Loading…' : 'Select twin'} /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Twin"><SelectValue placeholder={twins.isPending ? 'Loading…' : 'Select twin'} /></SelectTrigger>
                 <SelectContent>
                   {twins.data?.map((t: TwinView) => (
                     <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
@@ -165,7 +166,7 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
             <div className="space-y-1.5">
               <Label className="text-xs">Twin version</Label>
               <Select value={effectiveVersionId || undefined} onValueChange={setVersionId} disabled={!twinId}>
-                <SelectTrigger className="h-9">
+                <SelectTrigger className="h-9" aria-label="Twin version">
                   <SelectValue placeholder={!twinId ? 'Pick a twin first' : versions.isPending ? 'Loading…' : 'Select version'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -178,11 +179,11 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Kind</Label>
               <Select value={kind} onValueChange={onKindChange}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Kind"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="image">Image</SelectItem>
                   <SelectItem value="video">Video</SelectItem>
@@ -192,7 +193,7 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
             <div className="space-y-1.5">
               <Label className="text-xs">Style</Label>
               <Select value={style} onValueChange={(v) => setStyle(v as RenderStyle)}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Style"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {STYLES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
@@ -202,7 +203,7 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
           <div className="space-y-1.5">
             <Label className="text-xs">Adapter (optional)</Label>
             <Select value={adapter} onValueChange={(v) => setAdapter(v)}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9" aria-label="Adapter (optional)"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto">auto — runtime selects by policy</SelectItem>
                 {ADAPTERS[kind].map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
@@ -218,7 +219,7 @@ function NewRenderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
             <div className="space-y-1.5">
               <Label className="text-xs">Performance (optional)</Label>
               <Select value={performanceId} onValueChange={(v) => setPerformanceId(v)}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Performance (optional)"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None — idle pose</SelectItem>
                   {performances.data?.map((p) => (
@@ -278,6 +279,7 @@ function RenderDetailDialog({
                 <video
                   controls
                   src={render.artifact.url}
+                  aria-label="Render video preview"
                   className="max-h-80 w-full rounded-lg border bg-black"
                 />
               ) : (
@@ -410,10 +412,12 @@ export function RendersView() {
         {renders.isPending ? (
           <div className="space-y-2.5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
         ) : renders.isError ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-            <span>Couldn’t load renders — {renders.error instanceof YouApiError ? renders.error.message : 'request failed'}</span>
-            <Button size="sm" variant="outline" className="h-7" onClick={() => renders.refetch()}>Retry</Button>
-          </div>
+          <QueryError
+            error={renders.error}
+            compact
+            onRetry={() => void renders.refetch()}
+            title="Couldn’t load renders"
+          />
         ) : !renders.data?.length ? (
           <EmptyState
             icon={ImageIcon}
@@ -438,7 +442,15 @@ export function RendersView() {
               </TableHeader>
               <TableBody>
                 {renders.data.map((r: RenderJobView) => (
-                  <TableRow key={r.id} className="cursor-pointer" onClick={() => setSelected(r)}>
+                  <TableRow
+                    key={r.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${r.kind} render — ${twinName.get(r.twinId) ?? r.twinId}`}
+                    className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    onClick={() => setSelected(r)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(r); } }}
+                  >
                     <TableCell className="max-w-36 truncate font-medium">
                       {twinName.get(r.twinId) ?? <IdChip id={r.twinId} label="twin" />}
                     </TableCell>

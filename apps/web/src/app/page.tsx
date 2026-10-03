@@ -90,7 +90,7 @@ function Logo() {
       </div>
       <div className="leading-none">
         <div className="text-[13px] font-semibold tracking-wide text-sidebar-foreground">YOU</div>
-        <div className="mt-0.5 text-[9.5px] uppercase tracking-[0.18em] text-sidebar-foreground/45">Reality Infrastructure</div>
+        <div className="mt-0.5 text-[9.5px] uppercase tracking-[0.18em] text-sidebar-foreground/60">Reality Infrastructure</div>
       </div>
     </div>
   );
@@ -103,7 +103,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       {NAV.map((group, i) => (
         <div key={group.section ?? 'root'} className="space-y-0.5">
           {group.section ? (
-            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/35">
+            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/60">
               {group.section}
             </div>
           ) : null}
@@ -144,14 +144,14 @@ function SidebarFooter() {
         </div>
         <div className="min-w-0 leading-tight">
           <div className="truncate text-xs font-medium text-sidebar-foreground">{session?.user.name ?? 'Studio'}</div>
-          <div className="truncate text-[10px] text-sidebar-foreground/50">{session?.tenant.name ?? 'local environment'}</div>
+          <div className="truncate text-[10px] text-sidebar-foreground/60">{session?.tenant.name ?? 'local environment'}</div>
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between rounded-md bg-sidebar-accent/50 px-2 py-1.5">
-        <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/55">
+        <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/60">
           <Activity className="size-3" aria-hidden /> env: local
         </span>
-        <span className="font-mono text-[9.5px] text-sidebar-foreground/40">API v1</span>
+        <span className="font-mono text-[9.5px] text-sidebar-foreground/60">API v1</span>
       </div>
     </div>
   );
@@ -218,17 +218,22 @@ function CommandPalette() {
 }
 
 function Shell() {
-  const { view, navigate, setSession, session } = useYouStore();
+  const { view, navigate, setSession, setSessionError, session } = useYouStore();
   const [mobileOpen, setMobileOpen] = useState(false);
   const ActiveView = useMemo(() => VIEWS[view] ?? VIEWS.overview, [view]);
 
   useEffect(() => {
     let cancelled = false;
     api.session.get().then((s) => { if (!cancelled) setSession(s); }).catch(() => {
-      api.session.create().then((s) => { if (!cancelled) setSession(s); }).catch(() => {});
+      api.session.create().then((s) => { if (!cancelled) setSession(s); }).catch((err) => {
+        // P6.B2 — no more silent swallow: surface the bootstrap failure to the
+        // store so Settings shows an honest retry surface instead of a
+        // permanent "Loading session…".
+        if (!cancelled) setSessionError(err instanceof Error ? err.message : 'Session bootstrap failed');
+      });
     });
     return () => { cancelled = true; };
-  }, [setSession]);
+  }, [setSession, setSessionError]);
 
   return (
     <div className="flex min-h-screen w-full">
@@ -268,7 +273,7 @@ function Shell() {
           <button
             type="button"
             onClick={() => useYouStore.getState().setCommandOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+            className="you-focus flex h-9 items-center gap-2 rounded-md border bg-card px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
             aria-label="Open search"
           >
             <Search className="size-3.5" aria-hidden />

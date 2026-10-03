@@ -38,6 +38,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { EmptyState, IdChip, KeyValue, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { QueryError } from '@/components/you/build/confidence';
 import { JobSteps } from '@/components/you/lab/job-steps';
 import { REGION_OPTIONS, regionLabel } from '@/components/you/build/regions';
@@ -217,7 +218,7 @@ function TemplateCreateDialog({
             <div className="space-y-1.5">
               <Label className="text-xs">Status</Label>
               <Select value={status} onValueChange={(v) => setStatus(v as 'draft' | 'published')}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Status"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="draft">draft</SelectItem>
                   <SelectItem value="published">published</SelectItem>
@@ -505,14 +506,24 @@ function TemplateDetail({
   });
   const t = q.data;
 
+  // P6.B8: typed error surface for the analyze route's honest refusals (503
+  // provider/service unavailable, 429 rate-limited) — inline retry guidance
+  // derived from the backend's retryAfterMs, not a bare toast. Declared BEFORE
+  // the q.isError early return below so the hook order is stable in both modes.
+  const analyzeErrors = useApiErrorSurface('Template analysis');
   const analyze = useMutation({
     // idem key is minted per submission attempt by the caller
     mutationFn: (idem: string) => api.templates.analyze(templateId, idem),
     onSuccess: (res) => {
+      analyzeErrors.clear();
       setJobId(res.jobId);
       toast.success(`Analyze job ${res.jobId.slice(0, 8)} started`);
     },
-    onError: (err) => toast.error(`Analyze failed — ${errMessage(err)}`),
+    onError: (err) => {
+      // honest degraded/rate-limited surfaces with retry guidance — not toasts
+      if (analyzeErrors.capture(err)) return;
+      toast.error(`Analyze failed — ${errMessage(err)}`);
+    },
   });
 
   const runAnalyze = () => analyze.mutate(uid());
@@ -551,6 +562,16 @@ function TemplateDetail({
           {t.analysis ? 'Re-run analyze' : 'Run analyze'}
         </Button>
       </div>
+
+      {/* P6.B8 — honest error surface: the analyze route refused with a typed
+          503 (provider unavailable) or 429 (rate-limited). Retry guidance
+          derives from the backend's retryAfterMs; the retry mints a fresh
+          idem key, exactly like the header button's click path. */}
+      <ApiErrorSurface
+        surface={analyzeErrors}
+        onRetry={runAnalyze}
+        retrying={analyze.isPending}
+      />
 
       {jobId ? (
         <SectionCard title="Coverage analysis job" description={done ? undefined : 'Polling the durable job — steps are real backend signals only.'}>
@@ -737,7 +758,15 @@ export function TemplatesView() {
               </TableHeader>
               <TableBody>
                 {templates.data.map((t) => (
-                  <TableRow key={t.id} className="cursor-pointer" onClick={() => setSelectedId(t.id)}>
+                  <TableRow
+                    key={t.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open template ${t.name}`}
+                    className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    onClick={() => setSelectedId(t.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedId(t.id); } }}
+                  >
                     <TableCell className="max-w-48">
                       <div className="truncate font-medium">{t.name}</div>
                       {t.description ? <div className="truncate text-[11px] text-muted-foreground">{t.description}</div> : null}

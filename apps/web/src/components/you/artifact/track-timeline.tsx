@@ -86,7 +86,7 @@ function StateLegend({ present }: { present: Set<string> }) {
             key={s}
             className={cn(
               'inline-flex items-center gap-1.5 font-mono text-[10px]',
-              on ? 'text-foreground' : 'text-muted-foreground/50',
+              on ? 'text-foreground' : 'text-muted-foreground',
             )}
             title={on ? `present in this performance` : 'not present in this performance'}
           >
