@@ -59,7 +59,7 @@ export function ProvenancePanel({ version }: { version: TwinVersionView }) {
             {p.evidenceAssetIds.map((assetId, i) => (
               <li key={assetId} className="flex flex-wrap items-center gap-2">
                 <IdChip id={assetId} label="" className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground/70" title={p.evidenceHashes?.[i]}>
+                <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted-foreground" title={p.evidenceHashes?.[i]}>
                   {p.evidenceHashes?.[i] ? `sha256: ${p.evidenceHashes[i].slice(0, 24)}…` : ''}
                 </span>
               </li>

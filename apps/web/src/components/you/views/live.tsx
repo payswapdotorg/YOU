@@ -12,8 +12,11 @@
 import { Radio, Map, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { EmptyState, PageHeader, SectionCard } from '@/components/you/shared/primitives';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { useYouStore } from '@/hooks/you/use-you-store';
 
 export function LiveView() {
+  const navigate = useYouStore((s) => s.navigate);
   return (
     <div className="space-y-6">
       <PageHeader
@@ -27,6 +30,11 @@ export function LiveView() {
         icon={Radio}
         title="Live sessions arrive in Stage 6"
         hint="Live WebRTC sessions will stream performance state — gaze, expression, speech — to a realtime-rendered twin, with consent scopes enforced per session."
+        action={(
+          <Button variant="outline" size="sm" onClick={() => navigate('agent-avatars')}>
+            See live states in Agent Avatars
+          </Button>
+        )}
       />
 
       <div className="grid gap-4 md:grid-cols-2">

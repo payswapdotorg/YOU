@@ -31,6 +31,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { EmptyState, IdChip, PageHeader, SectionCard, StatusBadge } from '@/components/you/shared/primitives';
+import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
+import { QueryError } from '@/components/you/build/confidence';
 import { AvatarStage } from '@/components/you/agent/avatar-stage';
 import { BodyCreateDialog } from '@/components/you/agent/body-create-dialog';
 import { cn } from '@/lib/utils';
@@ -103,7 +105,14 @@ function useSessionHistory(known: AgentAvatarSessionView[]) {
     return [...map.values()].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [recovered.data, known]);
 
-  return { sessions: merged.slice(0, 8), isRecovering: events.isPending || recovered.isPending };
+  return {
+    sessions: merged.slice(0, 8),
+    isRecovering: events.isPending || recovered.isPending,
+    // P6.B2: events-query failure surfaced honestly — the history list must
+    // not silently claim "no avatar sessions" when discovery itself failed.
+    eventsError: events.isError ? events.error : null,
+    refetchEvents: () => void events.refetch(),
+  };
 }
 
 // ─── Chat column ─────────────────────────────────────────────────────────────
@@ -140,14 +149,26 @@ function SessionPanel({
     qc.invalidateQueries({ queryKey: ['agent-bodies'] });
   };
 
+  // P6.B8: typed error surfaces for this panel's three mutation flows.
+  // capture() runs BEFORE the toasts: 503/429 provider refusals become
+  // inline retry guidance (derived from the backend's retryAfterMs, with one
+  // automatic retry after the window); everything capture() declines keeps
+  // its existing toast. Consent (403/409) and not-implemented (501) are never
+  // captured, so their dedicated flows below stay intact.
+  const turnErrors = useApiErrorSurface('Avatar turn');
+  const possessErrors = useApiErrorSurface('Soul swap');
+  const endErrors = useApiErrorSurface('Session end');
+
   const sendTurn = useMutation({
     mutationFn: () => api.agents.sendTurn(sessionId, message),
     onSuccess: () => {
+      turnErrors.clear();
       setMessage('');
       setRuntimeUnavailable(false);
       qc.invalidateQueries({ queryKey: ['agent-session', sessionId] });
     },
     onError: (err) => {
+      if (turnErrors.capture(err)) return;
       if (isNotImplemented(err)) {
         setRuntimeUnavailable(true);
         toast.error('Soul runtime not yet available');
@@ -161,6 +182,7 @@ function SessionPanel({
   const possess = useMutation({
     mutationFn: (soulKey: string) => api.agents.possess(data?.bodyId ?? '', soulKey, uid()),
     onSuccess: (_body, soulKey) => {
+      possessErrors.clear();
       const soul = souls.data?.find((s: AgentSoulView) => s.soulKey === soulKey);
       if (data) {
         setSwap({
@@ -175,6 +197,7 @@ function SessionPanel({
       refresh();
     },
     onError: (err) => {
+      if (possessErrors.capture(err)) return;
       const msg = err instanceof YouApiError ? err.message : 'request failed';
       toast.error(`Soul swap failed — ${msg}`);
     },
@@ -183,11 +206,13 @@ function SessionPanel({
   const endSession = useMutation({
     mutationFn: () => api.agents.endSession(sessionId),
     onSuccess: () => {
+      endErrors.clear();
       toast.success('Session ended');
       qc.invalidateQueries({ queryKey: ['agent-session', sessionId] });
       onEnded();
     },
     onError: (err) => {
+      if (endErrors.capture(err)) return;
       const msg = err instanceof YouApiError ? err.message : 'request failed';
       toast.error(`End failed — ${msg}`);
     },
@@ -207,10 +232,7 @@ function SessionPanel({
   if (session.isError) {
     return (
       <SectionCard title="Session" icon={Bot}>
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load session — {session.error instanceof YouApiError ? session.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => session.refetch()}>Retry</Button>
-        </div>
+        <QueryError error={session.error} compact onRetry={() => void session.refetch()} title="Could not load session" />
       </SectionCard>
     );
   }
@@ -228,7 +250,7 @@ function SessionPanel({
           {live ? (
             <AlertDialog open={endOpen} onOpenChange={setEndOpen}>
               <AlertDialogTrigger asChild>
-                <Button size="sm" variant="outline" className="gap-1.5 text-red-700 hover:text-red-700 dark:text-red-400 dark:hover:text-red-400">
+                <Button size="sm" variant="outline" className="h-11 gap-1.5 text-red-700 hover:text-red-700 sm:h-8 dark:text-red-400 dark:hover:text-red-400">
                   <StopCircle className="size-3.5" aria-hidden /> End
                 </Button>
               </AlertDialogTrigger>
@@ -257,6 +279,10 @@ function SessionPanel({
     >
       {data ? (
         <div className="space-y-4">
+          {/* P6.B8 — session-end flow errors: typed 503/429 refusals render
+              inline retry guidance instead of a bare toast. */}
+          <ApiErrorSurface surface={endErrors} onRetry={() => endSession.mutate()} retrying={endSession.isPending} />
+
           {/* session header */}
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusBadge status={data.status} />
@@ -285,7 +311,10 @@ function SessionPanel({
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Select value={soulPicker || undefined} onValueChange={(v) => setSoulPicker(v)}>
-                  <SelectTrigger className="h-8 w-full min-w-44 flex-1 sm:w-56">
+                  <SelectTrigger
+                    aria-label="Possess with another Soul"
+                    className="data-[size=default]:h-11 w-full min-w-44 flex-1 sm:data-[size=default]:h-9 sm:w-56"
+                  >
                     <SelectValue placeholder={possess.isPending ? 'Possessing…' : 'Possess with another Soul'} />
                   </SelectTrigger>
                   <SelectContent>
@@ -297,13 +326,20 @@ function SessionPanel({
                   </SelectContent>
                 </Select>
                 <Button
-                  size="sm" className="gap-1.5" disabled={!soulPicker || possess.isPending}
+                  size="sm" className="h-11 gap-1.5 sm:h-8" disabled={!soulPicker || possess.isPending}
                   onClick={() => soulPicker && possess.mutate(soulPicker)}
                 >
                   {possess.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Ghost className="size-3.5" aria-hidden />}
                   Swap
                 </Button>
               </div>
+              {/* P6.B8 — soul-swap flow errors; retry re-mutates the picked soul. */}
+              <ApiErrorSurface
+                surface={possessErrors}
+                onRetry={() => { if (soulPicker) possess.mutate(soulPicker); }}
+                retrying={possess.isPending}
+                className="mt-2"
+              />
               {swap ? (
                 <div className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2.5">
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -379,6 +415,11 @@ function SessionPanel({
               </div>
             ) : null}
 
+            {/* P6.B8 — avatar-turn flow errors: typed 503/429 provider
+                refusals render inline retry guidance (retry re-sends the
+                drafted turn) instead of a toast-only failure. */}
+            <ApiErrorSurface surface={turnErrors} onRetry={() => sendTurn.mutate()} retrying={sendTurn.isPending} />
+
             <form
               className="mt-2 flex gap-2"
               onSubmit={(e) => {
@@ -391,10 +432,10 @@ function SessionPanel({
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder={live ? 'Message the avatar…' : 'Session ended'}
                 disabled={!live || sendTurn.isPending}
-                className="h-9"
+                className="h-11 sm:h-9"
                 aria-label="Message"
               />
-              <Button type="submit" size="sm" className="gap-1.5" disabled={!live || !message.trim() || sendTurn.isPending}>
+              <Button type="submit" size="sm" className="h-11 gap-1.5 sm:h-8" disabled={!live || !message.trim() || sendTurn.isPending}>
                 {sendTurn.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Send className="size-3.5" aria-hidden />}
                 Send
               </Button>
@@ -404,7 +445,7 @@ function SessionPanel({
           {!live ? (
             <div className="flex items-center justify-between rounded-lg border border-dashed px-3 py-2.5">
               <span className="text-xs text-muted-foreground">Ended {rel(data.endedAt)}</span>
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate('agent-avatars')}>
+              <Button size="sm" variant="outline" className="h-11 gap-1.5 sm:h-8" onClick={() => navigate('agent-avatars')}>
                 <Play className="size-3.5" aria-hidden /> Start a new session
               </Button>
             </div>
@@ -417,12 +458,14 @@ function SessionPanel({
 
 // ─── Start-session column state ──────────────────────────────────────────────
 function StartSessionCard({
-  bodies, souls, twins, onStarted,
+  bodies, souls, twins, onStarted, bodiesPending, soulsPending,
 }: {
   bodies: AgentBodyView[];
   souls: AgentSoulView[];
   twins: { id: string; displayName: string }[];
   onStarted: (sessionId: string) => void;
+  bodiesPending: boolean;
+  soulsPending: boolean;
 }) {
   const qc = useQueryClient();
   const navigate = useYouStore((s) => s.navigate);
@@ -431,6 +474,10 @@ function StartSessionCard({
   const [twinId, setTwinId] = useState('none');
   const [consentError, setConsentError] = useState<string | null>(null);
 
+  // P6.B8: typed error surface for the session-start flow — 503/429
+  // refusals render inline retry guidance; consent errors are NEVER captured
+  // (taxonomy maps them to consent/auth classes), so that flow stays intact.
+  const startErrors = useApiErrorSurface('Session start');
   const start = useMutation({
     mutationFn: () =>
       api.agents.startSession(
@@ -438,12 +485,14 @@ function StartSessionCard({
         uid(),
       ),
     onSuccess: (session) => {
+      startErrors.clear();
       setConsentError(null);
       toast.success(`Session started — ${session.bodyName} possessed by ${session.soulLabel}`);
       qc.invalidateQueries({ queryKey: ['agent-bodies'] });
       onStarted(session.id);
     },
     onError: (err) => {
+      if (startErrors.capture(err)) return;
       if (isConsentError(err)) {
         setConsentError(err instanceof YouApiError ? err.message : 'consent_required');
       } else {
@@ -466,7 +515,7 @@ function StartSessionCard({
           <div className="space-y-1.5">
             <Label className="text-xs">Body <span className="text-muted-foreground">(capability contract)</span></Label>
             <Select value={effectiveBodyId || undefined} onValueChange={setBodyId}>
-              <SelectTrigger className="h-9"><SelectValue placeholder={bodies.length ? 'Select body' : 'No bodies yet'} /></SelectTrigger>
+              <SelectTrigger aria-label="Select body" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue placeholder={bodiesPending ? 'Loading bodies…' : bodies.length ? 'Select body' : 'No bodies yet'} /></SelectTrigger>
               <SelectContent>
                 {bodies.map((b) => (
                   <SelectItem key={b.id} value={b.id}>{b.name} · {b.role}</SelectItem>
@@ -477,7 +526,7 @@ function StartSessionCard({
           <div className="space-y-1.5">
             <Label className="text-xs">Soul <span className="text-muted-foreground">(runtime binding)</span></Label>
             <Select value={effectiveSoulKey || undefined} onValueChange={setSoulKey}>
-              <SelectTrigger className="h-9"><SelectValue placeholder={souls.length ? 'Select soul' : 'No souls in catalog'} /></SelectTrigger>
+              <SelectTrigger aria-label="Select soul" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue placeholder={soulsPending ? 'Loading souls…' : souls.length ? 'Select soul' : 'No souls in catalog'} /></SelectTrigger>
               <SelectContent>
                 {souls.map((s) => (
                   <SelectItem key={s.soulKey} value={s.soulKey}>
@@ -490,7 +539,7 @@ function StartSessionCard({
           <div className="space-y-1.5">
             <Label className="text-xs">Twin (optional)</Label>
             <Select value={twinId} onValueChange={setTwinId}>
-              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger aria-label="Select twin" className="data-[size=default]:h-11 sm:data-[size=default]:h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">None — abstract avatar</SelectItem>
                 {twins.map((t) => (
@@ -506,10 +555,12 @@ function StartSessionCard({
               </p>
             ) : null}
           </div>
-          <Button className="w-full gap-1.5" disabled={!canStart} onClick={() => start.mutate()}>
+          <Button className="h-11 w-full gap-1.5 sm:h-9" disabled={!canStart} onClick={() => start.mutate()}>
             {start.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
             Start session
           </Button>
+          {/* P6.B8 — session-start flow errors; retry re-attempts the same pick. */}
+          <ApiErrorSurface surface={startErrors} onRetry={() => start.mutate()} retrying={start.isPending} />
         </div>
       </SectionCard>
 
@@ -526,7 +577,7 @@ function StartSessionCard({
               <button
                 type="button"
                 onClick={() => navigate('trust')}
-                className="inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline decoration-amber-500/50 underline-offset-4 transition-colors hover:decoration-amber-600 dark:text-amber-200"
+                className="you-focus inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline decoration-amber-500/50 underline-offset-4 transition-colors hover:decoration-amber-600 dark:text-amber-200"
               >
                 Review consent grants in Trust <ChevronRight className="size-3" aria-hidden />
               </button>
@@ -586,10 +637,7 @@ export function AgentAvatarsView() {
           {bodies.isPending ? (
             <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
           ) : bodies.isError ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-              <span>Couldn’t load bodies — {bodies.error instanceof YouApiError ? bodies.error.message : 'request failed'}</span>
-              <Button size="sm" variant="outline" className="h-7" onClick={() => bodies.refetch()}>Retry</Button>
-            </div>
+            <QueryError error={bodies.error} compact onRetry={() => void bodies.refetch()} title="Could not load bodies" />
           ) : !bodies.data?.length ? (
             <EmptyState
               icon={Bot}
@@ -645,7 +693,7 @@ export function AgentAvatarsView() {
                           <Badge key={s.id} variant="outline" className="max-w-32 truncate font-mono text-[9px]">{s.soulKey}</Badge>
                         ))
                       ) : (
-                        <span className="text-[10px] text-muted-foreground/70">never</span>
+                        <span className="text-[10px] text-muted-foreground">never</span>
                       )}
                     </div>
                     <div className="mt-1.5"><IdChip id={b.id} label="body" /></div>
@@ -665,10 +713,7 @@ export function AgentAvatarsView() {
           {souls.isPending ? (
             <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
           ) : souls.isError ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-              <span>Couldn’t load souls — {souls.error instanceof YouApiError ? souls.error.message : 'request failed'}</span>
-              <Button size="sm" variant="outline" className="h-7" onClick={() => souls.refetch()}>Retry</Button>
-            </div>
+            <QueryError error={souls.error} compact onRetry={() => void souls.refetch()} title="Could not load souls" />
           ) : !souls.data?.length ? (
             <EmptyState
               icon={Ghost}
@@ -730,6 +775,8 @@ export function AgentAvatarsView() {
             bodies={bodies.data ?? []}
             souls={souls.data ?? []}
             twins={twins.data?.map((t) => ({ id: t.id, displayName: t.displayName })) ?? []}
+            bodiesPending={bodies.isPending}
+            soulsPending={souls.isPending}
             onStarted={setActiveId}
           />
         )}
@@ -743,6 +790,8 @@ export function AgentAvatarsView() {
       >
         {history.isRecovering && !history.sessions.length ? (
           <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+        ) : history.eventsError && !history.sessions.length ? (
+          <QueryError error={history.eventsError} compact onRetry={history.refetchEvents} title="Could not load session history" />
         ) : !history.sessions.length ? (
           <EmptyState
             icon={History}
@@ -750,8 +799,8 @@ export function AgentAvatarsView() {
             hint="Start a session above — the history list is assembled from real sessions only (API v1 has no list-sessions endpoint; history is recovered from events)."
           />
         ) : (
-          <div className="max-h-72 you-scroll overflow-y-auto rounded-lg border">
-            <table className="w-full text-sm">
+          <div className="max-h-72 you-scroll overflow-auto rounded-lg border">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Body</th>

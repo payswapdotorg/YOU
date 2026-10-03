@@ -60,11 +60,11 @@ function TwinCard({
           <span className="you-num" title={twin.createdAt}>created {timeAgo(twin.createdAt)}</span>
         </div>
         <div>
-          <div className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/70">confidence</div>
+          <div className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">confidence</div>
           {detailPending ? (
             <Skeleton className="h-4 w-full" />
           ) : detailError ? (
-            <span className="text-[11px] text-muted-foreground/60">detail unavailable</span>
+            <span className="text-[11px] text-muted-foreground">detail unavailable</span>
           ) : (
             <ConfidenceBar value={confidence} />
           )}
@@ -74,9 +74,9 @@ function TwinCard({
           {detailPending ? (
             <Skeleton className="h-4 w-8" />
           ) : detailError ? (
-            <span className="text-muted-foreground/60">—</span>
+            <span className="text-muted-foreground">—</span>
           ) : (
-            <span className="you-num font-medium text-foreground/80">{evidenceCount ?? 0} assets</span>
+            <span className="you-num font-medium text-foreground">{evidenceCount ?? 0} assets</span>
           )}
         </div>
       </div>

@@ -37,6 +37,7 @@ import { EmptyState, IdChip, PageHeader, SectionCard, StatusBadge } from '@/comp
 import { CodeBlock, CopyButton } from '@/components/you/artifact/copy-button';
 import { UsagePanel } from '@/components/you/develop/usage-panel';
 import { DocsPanel } from '@/components/you/develop/docs-panel';
+import { QueryError } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
 
 const WEBHOOK_EVENT_TYPES = [
@@ -108,10 +109,7 @@ function ApiKeysTab() {
       {keys.isPending ? (
         <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : keys.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load keys — {keys.error instanceof YouApiError ? keys.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => keys.refetch()}>Retry</Button>
-        </div>
+        <QueryError error={keys.error} compact onRetry={() => void keys.refetch()} title="Couldn’t load API keys" />
       ) : !keys.data?.length ? (
         <EmptyState
           icon={KeyRound}
@@ -186,7 +184,7 @@ function ApiKeysTab() {
                       aria-pressed={on}
                       onClick={() => setScopes((prev) => (on ? prev.filter((s) => s !== scope) : [...prev, scope]))}
                       className={cn(
-                        'rounded-md border px-3 py-1.5 font-mono text-xs transition-colors',
+                        'you-focus rounded-md border px-3 py-1.5 font-mono text-xs transition-colors',
                         on ? 'border-primary/50 bg-primary/12 text-foreground' : 'text-muted-foreground hover:border-foreground/25',
                       )}
                     >
@@ -327,10 +325,7 @@ function EventsTab() {
       {events.isPending ? (
         <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : events.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load events — {events.error instanceof YouApiError ? events.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => events.refetch()}>Retry</Button>
-        </div>
+        <QueryError error={events.error} compact onRetry={() => void events.refetch()} title="Couldn’t load events" />
       ) : !filtered.length ? (
         <EmptyState
           icon={Activity}
@@ -343,18 +338,24 @@ function EventsTab() {
             const open = expanded.has(e.id);
             return (
               <div key={e.id} className="rounded-md border bg-card/60">
-                <button
-                  type="button"
-                  className="flex w-full flex-wrap items-center gap-2 px-2.5 py-2 text-left"
-                  onClick={() => toggle(e.id)}
-                  aria-expanded={open}
-                >
-                  <ChevronDown className={cn('size-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} aria-hidden />
-                  <Badge variant="outline" className={cn('font-mono text-[10px]', eventStyle(e.type))}>{e.type}</Badge>
-                  <span className="font-mono text-[11px] text-muted-foreground">{e.entityType}</span>
+                {/* Row head split into wrapper + dedicated toggle: the IdChip is
+                    itself a <button> (copy-to-clipboard), so it must be a SIBLING
+                    of the toggle — a button inside a button is invalid HTML and
+                    made one click both copy the id and expand the row. */}
+                <div className="flex w-full flex-wrap items-center gap-2 px-2.5 py-2">
+                  <button
+                    type="button"
+                    className="you-focus flex flex-wrap items-center gap-2 text-left"
+                    onClick={() => toggle(e.id)}
+                    aria-expanded={open}
+                  >
+                    <ChevronDown className={cn('size-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} aria-hidden />
+                    <Badge variant="outline" className={cn('font-mono text-[10px]', eventStyle(e.type))}>{e.type}</Badge>
+                    <span className="font-mono text-[11px] text-muted-foreground">{e.entityType}</span>
+                  </button>
                   {e.entityId ? <IdChip id={e.entityId} /> : null}
                   <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{rel(e.createdAt)}</span>
-                </button>
+                </div>
                 {open ? (
                   <pre className="you-scroll mx-2.5 mb-2.5 max-h-56 overflow-auto rounded-md border bg-muted/30 p-2.5 font-mono text-[10px] leading-relaxed">
                     {JSON.stringify(e.payload, null, 2)}
@@ -414,10 +415,7 @@ function WebhooksTab() {
       {webhooks.isPending ? (
         <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
       ) : webhooks.isError ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-400">
-          <span>Couldn’t load webhooks — {webhooks.error instanceof YouApiError ? webhooks.error.message : 'request failed'}</span>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => webhooks.refetch()}>Retry</Button>
-        </div>
+        <QueryError error={webhooks.error} compact onRetry={() => void webhooks.refetch()} title="Couldn’t load webhooks" />
       ) : !webhooks.data?.length ? (
         <EmptyState
           icon={Webhook}
@@ -479,7 +477,7 @@ function WebhooksTab() {
                       aria-pressed={on}
                       onClick={() => setEvents((prev) => (on ? prev.filter((e) => e !== t) : [...prev, t]))}
                       className={cn(
-                        'rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors',
+                        'you-focus rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors',
                         on ? 'border-primary/50 bg-primary/12 text-foreground' : 'text-muted-foreground hover:border-foreground/25',
                       )}
                     >

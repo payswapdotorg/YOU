@@ -28,7 +28,7 @@ export function CopyButton({
         }).catch(() => toast.error('Copy failed'));
       }}
       className={cn(
-        'inline-flex size-7 shrink-0 items-center justify-center rounded-md border bg-card text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground',
+        'you-focus inline-flex size-7 shrink-0 items-center justify-center rounded-md border bg-card text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground',
         className,
       )}
     >

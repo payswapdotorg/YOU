@@ -41,7 +41,7 @@ function RegionPicker({
             aria-pressed={on}
             onClick={() => onToggle(r.value)}
             className={cn(
-              'rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50',
+              'you-focus rounded-full border px-2 py-1.5 text-[11px] transition-colors disabled:opacity-50',
               on
                 ? 'border-emerald-500/40 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
                 : 'border-border bg-muted/40 text-muted-foreground hover:border-foreground/25',
@@ -129,7 +129,7 @@ export function UploadControl({
           type="button"
           size="sm"
           variant="outline"
-          className="h-7 gap-1.5 px-2.5 text-[11.5px]"
+          className="h-9 gap-1.5 px-3 text-[11.5px] sm:h-7 sm:px-2.5"
           onClick={pick}
           disabled={upload.isPending || (free && regions.length === 0)}
           title={free && regions.length === 0 ? 'Select at least one region first' : undefined}

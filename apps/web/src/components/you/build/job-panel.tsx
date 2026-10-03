@@ -64,7 +64,7 @@ export function JobStepsPanel({ job, dense = false }: { job: JobView | null; den
             <span className="mt-0.5"><StepIcon status={step.status} /></span>
             <span className={cn(
               'min-w-0',
-              step.status === 'pending' && 'text-muted-foreground/60',
+              step.status === 'pending' && 'text-muted-foreground/80',
               step.status === 'done' && 'text-muted-foreground',
               step.status === 'running' && 'font-medium',
             )}>

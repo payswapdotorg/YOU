@@ -314,7 +314,7 @@ export function TwinDetail({
         <button
           type="button"
           onClick={() => setCompileOpen(true)}
-          className="flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left text-[13px] transition-colors hover:bg-muted/40"
+          className="you-focus flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left text-[13px] transition-colors hover:bg-muted/40"
         >
           <Loader2 className="size-4 shrink-0 animate-spin text-amber-600 dark:text-amber-400" aria-hidden />
           <span className="min-w-0 flex-1">Reconstruction in progress — viewing live job steps</span>
@@ -361,7 +361,7 @@ export function TwinDetail({
                       onClick={() => setSelectedVersionId(v.id)}
                       aria-current={selectedVersion?.id === v.id ? 'true' : undefined}
                       className={cn(
-                        'w-full rounded-lg border bg-card p-3.5 text-left transition-all hover:border-foreground/25',
+                        'you-focus w-full rounded-lg border bg-card p-3.5 text-left transition-all hover:border-foreground/25',
                         selectedVersion?.id === v.id && 'border-emerald-500/50 ring-1 ring-emerald-500/25',
                       )}
                     >
