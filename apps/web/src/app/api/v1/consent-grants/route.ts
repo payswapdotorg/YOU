@@ -1,8 +1,14 @@
 // GET  /api/v1/consent-grants — list (revoked/expired included, states visible)
 // POST /api/v1/consent-grants — grant (subjectId, purpose, scopes, ttlHours…)
+//   P6.B3: optional `statements` records the F1 operator-capture consent
+//   (docs/F1_OPERATOR_CAPTURE.md "Required consent": what / why / tests /
+//   retention / training — normalized to DEFAULT-DENIED when absent /
+//   deletion+withdrawal process). Grants WITHOUT statements stay valid for
+//   every pre-existing flow; only the F1 guided capture flow requires them.
 import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
 import { isValidScopeList } from '@/lib/you/core/consent';
+import { normalizeF1StatementsForStorage } from '@/lib/you/core/f1-flow';
 import { badRequest, handleRoute, optNumber, optStringArray, readJsonBody, reqString } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
 import { consentGrantView } from '@/lib/you/core/views';
@@ -46,6 +52,18 @@ export async function POST(request: Request): Promise<Response> {
       throw badRequest(`ttlHours must be an integer between 1 and ${MAX_TTL_HOURS}`);
     }
 
+    // P6.B3 — optional F1 consent statements. Invalid shapes are refused
+    // here (the subject must restate them); an absent `training` block is
+    // normalized to default-DENIED per the F1 law, everything else absent
+    // simply makes this a non-F1 grant (the guided flow's gate will say so).
+    let statementsJson = '{}';
+    if (body.statements !== undefined && body.statements !== null) {
+      if (typeof body.statements !== 'object' || Array.isArray(body.statements)) {
+        throw badRequest('statements must be an object with the F1 consent fields (what, why, tests, retention, training, deletion)');
+      }
+      statementsJson = JSON.stringify(normalizeF1StatementsForStorage(body.statements));
+    }
+
     const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000);
     const grant = await db.consentGrant.create({
       data: {
@@ -56,6 +74,7 @@ export async function POST(request: Request): Promise<Response> {
         scopes: JSON.stringify(scopes),
         operations: JSON.stringify(operations),
         outputs: JSON.stringify(outputs),
+        statements: statementsJson,
         expiresAt,
       },
     });
@@ -65,6 +84,7 @@ export async function POST(request: Request): Promise<Response> {
       purpose,
       scopes,
       outputs,
+      f1Statements: statementsJson !== '{}',
       expiresAt: expiresAt.toISOString(),
     });
     await emitEvent(auth.tenantId, 'consent.granted', 'consent_grant', grant.id, {

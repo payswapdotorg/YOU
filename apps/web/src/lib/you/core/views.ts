@@ -6,7 +6,8 @@ import type {
   AgentAvatarSessionView, AgentAvatarTurnView, AgentBodyView, AgentSoulView,
   ApiKeyView, ArtifactRef, BenchmarkRunView, CaptureChecklistItem, CaptureSessionView,
   ConsentGrantView, ConsentScope, EvaluationReportView, EventRecordView, EvidenceAssetView,
-  EvidenceQuality, EvidenceRequestView, FailureCaseView, FeedbackRequestView, HTIR,
+  EvidenceQuality, EvidenceRequestView, FailureCaseView, FeedbackRequestView, F1EvidenceManifest,
+  F1ProtocolState, F1ReviewState, HTIR,
   HtirConfidence, JobStep, JobView, LabObjectiveView, PerformanceTrack, PerformanceView,
   PipelineCandidateView, PipelineGenome, PromotionRecordView, RenderJobView,
   SolutionArtifactManifest, SolutionArtifactView, TechnologyCandidateView,
@@ -20,6 +21,7 @@ import type {
   TechnologyCandidate, TechnologyVersion, Twin, TwinVersion, WebhookEndpoint,
 } from '@prisma/client';
 import { SOUL_CATALOG, type SoulCatalogEntry } from '../lab/seed';
+import { grantF1Statements } from './f1-flow';
 import { signStorageUrl } from './storage';
 
 /** Safe JSON decode for string-encoded columns. */
@@ -97,6 +99,13 @@ export function captureSessionView(
     createdAt: iso(c.createdAt),
     completedAt: c.completedAt ? iso(c.completedAt) : null,
     assets: assets.map(evidenceAssetView),
+    // P6.B3 — guided F1 flow state (null on every legacy session)
+    consentGrantId: c.consentGrantId ?? null,
+    protocol: parseJson<F1ProtocolState | null>(c.protocol, null),
+    checkpoints: parseJson<Record<string, unknown> | null>(c.checkpoints, null),
+    manifest: parseJson<F1EvidenceManifest | null>(c.manifest, null),
+    retention: parseJson<CaptureSessionView['retention']>(c.retention, null),
+    review: parseJson<F1ReviewState | null>(c.review, null),
   };
 }
 
@@ -111,6 +120,9 @@ export function consentGrantView(g: ConsentGrant): ConsentGrantView {
     scopes: parseJson<ConsentScope[]>(g.scopes, []),
     operations: parseJson<string[]>(g.operations, []),
     outputs: parseJson<string[]>(g.outputs, []),
+    // P6.B3 — the F1 statements recorded with the grant (null = not an
+    // F1-covered grant; the guided-flow gate refuses those honestly)
+    statements: grantF1Statements(g),
     expiresAt: iso(g.expiresAt),
     revokedAt: g.revokedAt ? iso(g.revokedAt) : null,
     createdAt: iso(g.createdAt),
