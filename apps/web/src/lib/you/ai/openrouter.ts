@@ -79,14 +79,17 @@ export function openRouterConfig(): OpenRouterConfig {
 /**
  * Hosted vision analysis through OpenRouter's chat-completions API with
  * image input as a data-URL content part (the standard OpenAI-compatible
- * vision shape OpenRouter proxies).
+ * vision shape OpenRouter proxies). `opts.model` overrides the env-derived
+ * model — the P6.C5 registry passes the resolved model id here (single
+ * recon vision call site).
  */
 export async function openRouterVisionAnalyze(
   imageBase64DataUrl: string,
   prompt: string,
-  _opts: { thinking?: boolean } = {},
+  opts: { thinking?: boolean; model?: string } = {},
 ): Promise<VisionResult> {
   const cfg = openRouterConfig();
+  const model = opts.model?.trim() || cfg.model;
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
@@ -99,7 +102,7 @@ export async function openRouterVisionAnalyze(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: cfg.model,
+        model,
         messages: [
           {
             role: 'user',

@@ -91,17 +91,19 @@ export interface VisionResult {
  * Analyze one image with the vision model. `imageBase64DataUrl` must be a
  * full data URL (`data:image/png;base64,…`). Inference-only: no biometric
  * data is ever used for training by YOU (see adapters/vlm-recon.ts metadata).
+ * `opts.model` overrides the observed default binding — the P6.C5 registry
+ * passes the resolved model id here (single recon vision call site).
  */
 export async function visionAnalyze(
   imageBase64DataUrl: string,
   prompt: string,
-  opts: { thinking?: boolean } = {}
+  opts: { thinking?: boolean; model?: string } = {}
 ): Promise<VisionResult> {
   const t0 = Date.now();
   try {
     const zai = await getZAI();
     const res = await zai.chat.completions.createVision({
-      model: 'glm-5v-turbo', // observed server-side binding for this sandbox's vision endpoint
+      model: opts.model?.trim() || 'glm-5v-turbo', // observed server-side binding; the registry default resolves the same id
       messages: [
         {
           role: 'user',
