@@ -18,6 +18,12 @@
 //     resolution stable after mutation attempts);
 //   - warning logging (once per reason, [you:ai-registry] prefix).
 //
+// P6.C2 extension (Worker C, render path): the dashscope provider joins the
+// registry with 'image-gen' / 'video-gen' capabilities — covered here at the
+// REGISTRY level (provider metadata, render capability matching, the
+// DASHSCOPE_API_KEY fail-closed law, render precedence). The adapter/seam
+// behavior against a local mock lives in ai-render.test.mjs.
+//
 // Part of the aggregated station gate (imported statically by tests/index.mjs).
 // Env vars touched here are snapshotted and restored around every test so
 // sibling suites in the same process are unaffected.
@@ -42,6 +48,9 @@ const TOUCHED = [
   'YOU_RECON_MODEL',
   'YOU_RECON_PROVIDER',
   'OPENROUTER_API_KEY',
+  'DASHSCOPE_API_KEY',
+  'YOU_DASHSCOPE_IMAGE_MODEL',
+  'YOU_DASHSCOPE_VIDEO_MODEL',
 ];
 let savedEnv;
 
@@ -54,13 +63,16 @@ function setEnv(vars) {
 
 beforeEach(() => {
   savedEnv = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]]));
-  // deterministic baseline for every test: no AI knobs, placeholder key
+  // deterministic baseline for every test: no AI knobs, placeholder keys
   setEnv({
     YOU_AI_PROVIDERS: undefined,
     YOU_AI_VISION_MODEL: undefined,
     YOU_RECON_MODEL: undefined,
     YOU_RECON_PROVIDER: undefined,
     OPENROUTER_API_KEY: PLACEHOLDER_KEY,
+    DASHSCOPE_API_KEY: PLACEHOLDER_KEY,
+    YOU_DASHSCOPE_IMAGE_MODEL: undefined,
+    YOU_DASHSCOPE_VIDEO_MODEL: undefined,
   });
 });
 
@@ -247,7 +259,7 @@ test('registry: MODEL_REGISTRY is deep-frozen and has no mutation API', () => {
   assert.equal(listModels(), MODEL_REGISTRY, 'listModels returns the frozen registry itself');
   assert.ok(MODEL_REGISTRY.length >= 5, 'multiple models per provider are registered');
   const providers = new Set(MODEL_REGISTRY.map((e) => e.provider));
-  assert.deepEqual([...providers].sort(), ['openrouter', 'zai']);
+  assert.deepEqual([...providers].sort(), ['dashscope', 'openrouter', 'zai']);
   for (const entry of MODEL_REGISTRY) {
     assert.ok(Object.isFrozen(entry), `entry ${entry.modelId} is frozen`);
     assert.ok(Object.isFrozen(entry.capabilities), `capabilities of ${entry.modelId} are frozen`);
@@ -308,4 +320,81 @@ test('registry: unverified capability numbers are null, never fabricated', () =>
     }
     assert.ok(typeof entry.notes === 'string' && entry.notes.length > 0, `${entry.modelId} carries a provenance note`);
   }
+});
+
+// ─── render capabilities (P6.C2 — dashscope / image-gen / video-gen) ────────
+
+test('registry: dashscope provider metadata declares its credential law', () => {
+  assert.equal(PROVIDER_METADATA.dashscope.id, 'dashscope');
+  assert.equal(PROVIDER_METADATA.dashscope.requiredEnvKey, 'DASHSCOPE_API_KEY');
+  assert.deepEqual(PROVIDER_METADATA.dashscope.aliases, []);
+  assert.equal(normalizeProvider('dashscope'), 'dashscope');
+});
+
+test('registry: render defaults resolve per capability (image-gen / video-gen)', () => {
+  const img = resolveModel('image-gen', { provider: 'dashscope' });
+  assert.equal(img.provider, 'dashscope');
+  assert.equal(img.modelId, 'wanx2.1-t2i-turbo');
+  assert.equal(img.source, 'registry-default');
+  assert.ok(img.entry?.capabilities['image-gen'], 'the image default is image-gen-capable');
+  assert.ok(!img.entry.capabilities.vision, 'generation models are not vision models');
+
+  const vid = resolveModel('video-gen', { provider: 'dashscope' });
+  assert.equal(vid.modelId, 'wan2.2-t2v-plus');
+  assert.equal(vid.source, 'registry-default');
+  assert.ok(vid.entry?.capabilities['video-gen']);
+});
+
+test('registry: a vision resolution never returns a generation model (and vice versa)', () => {
+  // the openrouter vision models have image-gen/video-gen: false…
+  for (const entry of MODEL_REGISTRY) {
+    if (entry.capabilities['image-gen'] || entry.capabilities['video-gen']) {
+      assert.ok(!entry.capabilities.vision, `generation model ${entry.modelId} must not declare vision`);
+      assert.ok(!entry.defaultFor.includes('vision'), 'generation models are never vision defaults');
+    }
+    if (entry.capabilities.vision) {
+      assert.ok(!entry.defaultFor.includes('image-gen') && !entry.defaultFor.includes('video-gen'));
+    }
+  }
+  // …and a vision model pinned for a render capability is skipped, not forced
+  setEnv({ YOU_AI_VISION_MODEL: 'google/gemini-2.5-flash' });
+  const r = resolveModel('image-gen', { provider: 'dashscope' });
+  assert.equal(r.modelId, 'wanx2.1-t2i-turbo', 'vision knob is not usable for image-gen');
+  assert.equal(r.source, 'registry-default');
+});
+
+test('registry: dashscope without DASHSCOPE_API_KEY fails closed AT RESOLUTION TIME', () => {
+  setEnv({ DASHSCOPE_API_KEY: undefined });
+  for (const capability of ['image-gen', 'video-gen']) {
+    assert.throws(
+      () => resolveModel(capability, { provider: 'dashscope' }),
+      (e) =>
+        e instanceof RegistryResolutionError &&
+        /requires DASHSCOPE_API_KEY/.test(e.message) &&
+        /refusing to guess credentials/.test(e.message),
+    );
+  }
+});
+
+test('registry: render precedence — YOU_AI_PROVIDERS pin beats the seam default chain', () => {
+  setEnv({ YOU_AI_PROVIDERS: 'dashscope:wanx2.1-t2i-turbo' });
+  const r = resolveModel('image-gen', { provider: 'dashscope' });
+  assert.equal(r.modelId, 'wanx2.1-t2i-turbo');
+  assert.equal(r.source, 'provider-override');
+  // the pin is capability-checked: a video model pinned for image-gen falls through
+  setEnv({ YOU_AI_PROVIDERS: 'dashscope:wan2.2-t2v-plus' });
+  const fell = resolveModel('image-gen', { provider: 'dashscope' });
+  assert.equal(fell.modelId, 'wanx2.1-t2i-turbo');
+  assert.equal(fell.source, 'registry-default');
+});
+
+test('registry: malformed dashscope pins are skipped with documented reasons', () => {
+  const { overrides, warnings } = parseProviderOverrides(
+    'dashscope:not-a-registry-model, dashscope:wanx2.1-t2i-turbo, dashscope:',
+  );
+  assert.equal(overrides.size, 1);
+  assert.equal(overrides.get('dashscope'), 'wanx2.1-t2i-turbo');
+  const joined = warnings.join('\n');
+  assert.match(joined, /not in the registry for provider "dashscope"/);
+  assert.match(joined, /expected the form "provider:model"/);
 });

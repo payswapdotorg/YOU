@@ -1,16 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // ai-video-1 — provider video generation adapter (Worker C lane).
-// Wraps the zai async video API (task + bounded polling):
+// Wraps the render provider seam (ai/render-provider.ts, P6.C2 — station
+// z-ai SDK or hosted DashScope, selected by YOU_RENDER_PROVIDER at the seam)
+// around an async video task + bounded polling:
 // - accepts a rendered raster image artifact as the visual base when one
 //   exists (base64 data URL); otherwise generates from the text prompt only;
-// - polls every 5s with a hard 10-minute bound — timeout is an honest error;
+// - polls on a bounded cadence with a hard 10-minute bound — timeout is an
+//   honest error;
 // - downloads and re-hosts the result into YOU object storage when possible;
 //   if the download fails, the provider remote URL is recorded as the artifact
 //   reference with an explicit honest note (bytes not re-hosted);
 // - REAL total latency is measured; provider cost is a modeled estimate.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { HTIR, RenderStyle } from '../contracts';
-import { createVideoTask, pollVideoTask } from '../ai/zai';
+import { renderCreateVideoTask, renderPollVideoTask } from '../ai/render-provider';
 import { getObject, putObject } from '../core/storage';
 
 export const AI_VIDEO_ADAPTER = {
@@ -82,7 +85,7 @@ export async function renderPortraitVideo(opts: AiVideoOptions): Promise<AiVideo
     usedImageBase = true;
   }
 
-  const task = await createVideoTask({
+  const task = await renderCreateVideoTask({
     prompt,
     ...(imageDataUrl ? { image_url: imageDataUrl } : {}),
     quality: 'speed',
@@ -92,7 +95,7 @@ export async function renderPortraitVideo(opts: AiVideoOptions): Promise<AiVideo
   });
 
   const maxWait = opts.maxWaitMs ?? 600_000;
-  const polled = await pollVideoTask(task.taskId, maxWait);
+  const polled = await renderPollVideoTask(task.taskId, maxWait);
   const waitedMs = polled.waitedMs;
 
   if (polled.status === 'timeout') {
@@ -144,8 +147,13 @@ export async function renderPortraitVideo(opts: AiVideoOptions): Promise<AiVideo
       adapterId: AI_VIDEO_ADAPTER.adapterId,
       adapterVersion: AI_VIDEO_ADAPTER.version,
       style,
+      provider: task.provider,
+      providerModel: task.model,
       providerTaskId: task.taskId,
       providerInitialStatus: task.status,
+      ...(task.droppedParams.length
+        ? { droppedProviderParams: task.droppedParams, droppedParamsNote: 'station-only knobs the selected provider contract cannot express (recorded honestly, not silently dropped)' }
+        : {}),
       pollWaitedMs: waitedMs,
       totalLatencyMs: Date.now() - t0,
       realLatency: true,

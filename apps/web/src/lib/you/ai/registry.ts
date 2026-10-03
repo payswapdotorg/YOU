@@ -1,12 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// AI provider/model registry (Worker C lane, P6.C5).
+// AI provider/model registry (Worker C lane, P6.C5; render capabilities
+// extended by P6.C2).
 //
 // One declarative table of every model the YOU stack may route to, plus the
 // single `resolveModel()` used by provider seams to pick the configured
 // default for a capability. Extends the P6.C1 recon seam — it does not
 // replace it: `YOU_RECON_PROVIDER` (local|openrouter, fail-closed on unknown
 // values) still selects WHO sees biometric evidence; this registry decides
-// WHICH model that provider runs.
+// WHICH model that provider runs. P6.C2 adds the same shape for the render
+// path: `YOU_RENDER_PROVIDER` (station|dashscope) selects WHO renders, and
+// the 'image-gen' / 'video-gen' capabilities below decide WHICH model the
+// dashscope render seam runs.
 //
 // Laws (mirroring C1):
 // - BOOT-TOLERANT, RESOLVE-STRICT: malformed or unknown env entries are
@@ -46,13 +50,17 @@
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type ProviderId = 'zai' | 'openrouter';
+export type ProviderId = 'zai' | 'openrouter' | 'dashscope';
 
 /** Provider name accepted at the seam level; 'local' is the C1 alias for zai. */
 export type ProviderAlias = ProviderId | 'local';
 
-/** Routable capabilities. 'vision' is live; future seams extend this union. */
-export type Capability = 'vision';
+/**
+ * Routable capabilities. 'vision' is the live recon path (P6.C1/C5);
+ * 'image-gen' / 'video-gen' are the render path (P6.C2 — the dashscope
+ * hosted render seam resolves its model ids through these).
+ */
+export type Capability = 'vision' | 'image-gen' | 'video-gen';
 
 /** Coarse routing tier for cost-aware selection — NOT a price quote. */
 export type CostTier = 'free' | 'low' | 'medium' | 'high';
@@ -60,6 +68,10 @@ export type CostTier = 'free' | 'low' | 'medium' | 'high';
 export interface ModelCapabilities {
   /** can analyze images (the recon path requires this)? */
   vision: boolean;
+  /** can GENERATE images (the render path, P6.C2)? */
+  'image-gen': boolean;
+  /** can GENERATE video (the render path, P6.C2)? */
+  'video-gen': boolean;
   /**
    * declared maximum single-image input size in bytes, or null when
    * unverified — callers must NOT route on null.
@@ -133,6 +145,12 @@ export const PROVIDER_METADATA: Readonly<Record<ProviderId, ProviderMetadata>> =
     label: 'OpenRouter (hosted)',
     requiredEnvKey: 'OPENROUTER_API_KEY', // fail closed at resolution time
   },
+  dashscope: {
+    id: 'dashscope',
+    aliases: [],
+    label: 'DashScope — Alibaba Bailian (hosted)',
+    requiredEnvKey: 'DASHSCOPE_API_KEY', // fail closed at resolution time (P6.C2 render seam)
+  },
 } as const);
 
 // ─── The registry (frozen at module evaluation — immutable after boot) ───────
@@ -142,7 +160,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'zai',
     modelId: 'glm-5v-turbo',
     label: 'GLM vision (sandbox SDK binding)',
-    capabilities: { vision: true, maxImageInputBytes: null, contextTokens: null },
+    capabilities: { vision: true, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: null },
     costTier: 'free', // sandbox-local accelerator, no marginal cost (AGENTS.md: free tiers are never hard dependencies)
     enabled: true,
     defaultFor: ['vision'],
@@ -153,7 +171,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'openrouter',
     modelId: 'google/gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
-    capabilities: { vision: true, maxImageInputBytes: null, contextTokens: 1_048_576 },
+    capabilities: { vision: true, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: 1_048_576 },
     costTier: 'low',
     enabled: true,
     defaultFor: ['vision'],
@@ -164,7 +182,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'openrouter',
     modelId: 'google/gemini-2.5-pro',
     label: 'Gemini 2.5 Pro',
-    capabilities: { vision: true, maxImageInputBytes: null, contextTokens: 1_048_576 },
+    capabilities: { vision: true, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: 1_048_576 },
     costTier: 'high',
     enabled: true,
     defaultFor: [],
@@ -174,7 +192,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'openrouter',
     modelId: 'openai/gpt-4o-mini',
     label: 'GPT-4o mini',
-    capabilities: { vision: true, maxImageInputBytes: null, contextTokens: 128_000 },
+    capabilities: { vision: true, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: 128_000 },
     costTier: 'low',
     enabled: true,
     defaultFor: [],
@@ -184,7 +202,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'openrouter',
     modelId: 'meta-llama/llama-3.3-70b-instruct',
     label: 'Llama 3.3 70B',
-    capabilities: { vision: false, maxImageInputBytes: null, contextTokens: 128_000 },
+    capabilities: { vision: false, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: 128_000 },
     costTier: 'low',
     enabled: true,
     defaultFor: [],
@@ -194,12 +212,34 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = deepFreeze([
     provider: 'openrouter',
     modelId: 'anthropic/claude-3.7-sonnet',
     label: 'Claude 3.7 Sonnet',
-    capabilities: { vision: true, maxImageInputBytes: null, contextTokens: 200_000 },
+    capabilities: { vision: true, 'image-gen': false, 'video-gen': false, maxImageInputBytes: null, contextTokens: 200_000 },
     costTier: 'high',
     enabled: false,
     defaultFor: [],
     notes:
       'disabled: not yet E2E-verified against the OpenRouter request contract — flip enabled only after a contract-mock run (same evidence bar as the C1 default)',
+  },
+  {
+    provider: 'dashscope',
+    modelId: 'wanx2.1-t2i-turbo',
+    label: 'Wanx 2.1 T2I Turbo (text-to-image)',
+    capabilities: { vision: false, 'image-gen': true, 'video-gen': false, maxImageInputBytes: null, contextTokens: null },
+    costTier: 'low',
+    enabled: true,
+    defaultFor: ['image-gen'],
+    notes:
+      'P6.C2 render-path default for hosted image generation (ai/dashscope.ts seam). Request contract from the public DashScope text2image docs and verified against the LOCAL contract mock in tests/contract/dashscope.test.mjs; NOT yet verified against the live provider (this sandbox has no egress/key) — flip only on live evidence if it misbehaves. Capability numbers unverified (null) — do not route on them.',
+  },
+  {
+    provider: 'dashscope',
+    modelId: 'wan2.2-t2v-plus',
+    label: 'Wan 2.2 T2V Plus (text/image-to-video)',
+    capabilities: { vision: false, 'image-gen': false, 'video-gen': true, maxImageInputBytes: null, contextTokens: null },
+    costTier: 'medium',
+    enabled: true,
+    defaultFor: ['video-gen'],
+    notes:
+      'P6.C2 render-path default for hosted video generation (ai/dashscope.ts seam, task-based submit→poll→fetch). Same evidence bar as the image entry: public-docs request contract verified against the LOCAL contract mock only; no live-provider verification from this sandbox. Capability numbers unverified (null) — do not route on them.',
   },
 ] as const);
 
@@ -216,7 +256,7 @@ export function normalizeProvider(input: string): ProviderId {
     if (raw === meta.id || meta.aliases.includes(raw)) return meta.id;
   }
   throw new RegistryResolutionError(
-    `unknown AI provider "${input.trim()}" — known providers: zai (alias "local"), openrouter; refusing to guess which provider sees biometric evidence`,
+    `unknown AI provider "${input.trim()}" — known providers: zai (alias "local"), openrouter, dashscope; refusing to guess which provider sees biometric evidence`,
   );
 }
 
@@ -258,7 +298,7 @@ export function parseProviderOverrides(raw: string | undefined): ProviderOverrid
       provider = normalizeProvider(providerPart);
     } catch {
       warnings.push(
-        `YOU_AI_PROVIDERS: skipping entry "${entry}" — unknown provider "${providerPart}" (known: zai, local, openrouter)`,
+        `YOU_AI_PROVIDERS: skipping entry "${entry}" — unknown provider "${providerPart}" (known: zai, local, openrouter, dashscope)`,
       );
       continue;
     }
