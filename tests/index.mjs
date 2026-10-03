@@ -24,5 +24,6 @@
 import './contract/smoke.test.mjs';
 import './contract/verification-flow.test.mjs';
 import './contract/hardening.test.mjs';
+import './contract/ai-registry.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
