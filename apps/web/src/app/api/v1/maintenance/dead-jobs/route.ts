@@ -20,6 +20,7 @@ import { runJob } from '@/lib/you/core/jobs';
 import { badRequest, forbidden, handleRoute, notFound, readJsonBody } from '@/lib/you/core/errors';
 import { audit, emitEvent } from '@/lib/you/core/events';
 import { deadJobCutoff, deadJobRetentionDays, parseDeadLetterError } from '@/lib/you/core/deadletter';
+import { parseEmbeddedCompute } from '@/lib/you/lab/compute-routing';
 
 export async function GET(request: Request): Promise<Response> {
   return handleRoute(async () => {
@@ -35,7 +36,7 @@ export async function GET(request: Request): Promise<Response> {
       where: { tenantId: auth.tenantId, status: 'dead' },
       orderBy: { finishedAt: 'desc' },
       take: limit,
-      select: { id: true, kind: true, status: true, error: true, createdAt: true, startedAt: true, finishedAt: true },
+      select: { id: true, kind: true, status: true, error: true, createdAt: true, startedAt: true, finishedAt: true, input: true },
     });
 
     return Response.json(
@@ -51,6 +52,11 @@ export async function GET(request: Request): Promise<Response> {
           finishedAt: j.finishedAt?.toISOString() ?? null,
           // structured dead-letter payload when parseable; null never lies
           deadLetter: parseDeadLetterError(j.error),
+          // P6.C3 (compute broker): the embedded routing record + quote for
+          // broker-submitted jobs — a workload whose provider exhausted its
+          // bounded retries lands here WITH its quote. null for plain
+          // route-submitted jobs (structure is never fabricated).
+          compute: parseEmbeddedCompute(j.input),
         })),
       },
       { headers: { 'cache-control': 'no-store' } },

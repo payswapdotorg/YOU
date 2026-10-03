@@ -29,6 +29,14 @@
 // unless the station path is actually selected — the same availability gap
 // C1 closed for reconstruction, closed here for rendering.
 //
+// P6.C3 — PER-JOB PROVIDER OVERRIDE (the C5 model-override pattern, render
+// side): every seam function accepts an optional `provider` in opts. When the
+// compute broker routes a durable render job to the hosted provider, the
+// render executor passes provider: 'dashscope' explicitly — per-job routing
+// WINS over the YOU_RENDER_PROVIDER env. When the override is absent (every
+// existing caller), the env seam keeps deciding — zero behavior change for
+// C2 deployments. An explicit-but-unknown override fails closed, same law.
+//
 // IMPORT SHAPE NOTE: static imports below carry explicit `.ts` extensions /
 // are type-only (erased) so this module is directly importable by the
 // node:test suites under Node's type stripping — the station branch's
@@ -41,6 +49,15 @@ import { dashScopeGenerateImage, dashScopeCreateVideoTask, dashScopePollTask, ty
 
 export type RenderProvider = 'station' | 'dashscope';
 
+/** Options shared by every render seam call (P6.C3). */
+export interface RenderSeamOptions extends DashScopeCallOptions {
+  /**
+   * Per-job provider override (the compute broker's embedded routing).
+   * Undefined = the YOU_RENDER_PROVIDER env seam decides (C2 law, unchanged).
+   */
+  provider?: RenderProvider;
+}
+
 /** Fail-closed provider selection (the C1 YOU_RECON_PROVIDER law, render side).
  * "local" and "zai" are accepted aliases of the station branch (the C1 seam
  * names the same SDK binding "local"; the P6.C5 registry id is "zai"). */
@@ -50,6 +67,19 @@ export function renderProvider(): RenderProvider {
   if (raw === 'dashscope') return 'dashscope';
   throw new Error(
     `YOU_RENDER_PROVIDER must be "station" (aliases "local"/"zai") or "dashscope" (got "${raw}") — refusing to guess which provider renders human-likeness artifacts`,
+  );
+}
+
+/**
+ * Resolve the effective provider for a seam call: the per-job override when
+ * present (broker routing — P6.C3), else the env seam (C2 law). Explicit but
+ * unknown override values fail closed — never a guess.
+ */
+export function selectRenderProvider(explicit: RenderProvider | undefined): RenderProvider {
+  if (explicit === undefined) return renderProvider();
+  if (explicit === 'station' || explicit === 'dashscope') return explicit;
+  throw new Error(
+    `render seam provider override must be "station" or "dashscope" (got ${JSON.stringify(String(explicit))}) — refusing to guess which provider renders`,
   );
 }
 
@@ -81,9 +111,10 @@ export interface RenderedImage {
 export async function renderGenerateImage(
   prompt: string,
   size: ZaiImageSize,
-  opts: DashScopeCallOptions = {},
+  opts: RenderSeamOptions = {},
 ): Promise<RenderedImage> {
-  if (renderProvider() === 'dashscope') {
+  const provider = selectRenderProvider(opts.provider);
+  if (provider === 'dashscope') {
     const model = resolveDashScopeModelId('image-gen');
     const img = await dashScopeGenerateImage(prompt, size, { ...opts, ...(model ? { model } : {}) });
     return { base64: img.base64, latencyMs: img.latencyMs, provider: 'dashscope', model: img.model, taskId: img.taskId };
@@ -112,9 +143,10 @@ export interface RenderedVideoTask {
  */
 export async function renderCreateVideoTask(
   params: ZaiVideoTaskParams,
-  opts: { model?: string } & DashScopeCallOptions = {},
+  opts: { model?: string } & RenderSeamOptions = {},
 ): Promise<RenderedVideoTask> {
-  if (renderProvider() === 'dashscope') {
+  const provider = selectRenderProvider(opts.provider);
+  if (provider === 'dashscope') {
     const model = resolveDashScopeModelId('video-gen');
     const droppedParams = (['quality', 'fps', 'with_audio'] as const).filter((k) => params[k] !== undefined);
     const task = await dashScopeCreateVideoTask(
@@ -136,9 +168,10 @@ export async function renderCreateVideoTask(
 export async function renderPollVideoTask(
   taskId: string,
   maxMs = 600_000,
-  opts: DashScopeCallOptions = {},
+  opts: RenderSeamOptions = {},
 ): Promise<VideoPollResult & { attempts?: number }> {
-  if (renderProvider() === 'dashscope') {
+  const provider = selectRenderProvider(opts.provider);
+  if (provider === 'dashscope') {
     return dashScopePollTask(taskId, { ...opts, maxWaitMs: maxMs });
   }
   const zai = await import('./zai'); // lazy: the station SDK stays out of the hosted graph

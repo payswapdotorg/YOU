@@ -36,5 +36,12 @@ import './contract/ai-render.test.mjs';
 // Retry-After parsing, countdown math, dead-job explanation, error taxonomy;
 // no React, no network, no db)
 import './contract/ux-states.test.mjs';
+// P6.C3 compute-broker unit suite (imported statically — pure unit over the
+// broker's zero-import routing half composed with the real A6 resilience
+// helpers; no app boot, no network, no db. The e2e suite
+// compute-broker-e2e.test.mjs is STANDALONE by design — it boots its own
+// server with provider-routing env overrides, same law as
+// resilience-routes.test.mjs / storage-db.test.mjs)
+import './contract/compute-broker.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

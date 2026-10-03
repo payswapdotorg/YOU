@@ -39,7 +39,7 @@ import { emitEvent, recordLlmCalls, recordUsage } from './events';
 import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations } from './benchmark';
-import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, type ComputeQuote, type ComputeSubmission } from './compute';
+import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, routedRenderProvider, embeddedComputeRoutingOf, type ComputeQuote, type ComputeSubmission } from './compute';
 import { recordRegionFailures } from './failure-atlas';
 import { hashString, makeRng } from './determinism';
 
@@ -218,16 +218,36 @@ async function executionComputeQuote(
 
 function computeRecord(
   quoteResult: { quote: ComputeQuote | null; phase: string; error?: string },
-  observed: ExecutorComputeRecord['observed']
+  observed: ExecutorComputeRecord['observed'],
+  routing: { providerId: string; routedVia: string }
 ): ExecutorComputeRecord {
   return {
     broker: 'compute-broker/w2c',
-    providerId: LOCAL_EXECUTOR_PROVIDER_ID,
-    routedVia: 'in-process executor via the durable job runner (local-executor provider)',
+    providerId: routing.providerId,
+    routedVia: routing.routedVia,
     quotePhase: quoteResult.phase,
     quote: quoteResult.quote,
     ...(quoteResult.error ? { quoteError: quoteResult.error } : {}),
     observed,
+  };
+}
+
+/**
+ * P6.C3: the honest routing labels for the compute record — the provider the
+ * broker actually routed to (embedded in Job.input.__compute), falling back
+ * to the local-executor truth for route-submitted jobs.
+ */
+function routingLabels(input: Record<string, unknown>): { providerId: string; routedVia: string } {
+  const embedded = embeddedComputeRoutingOf(input);
+  if (embedded !== null) {
+    return {
+      providerId: embedded.providerId,
+      routedVia: embedded.routedVia ?? `compute-broker routing (embedded record, provider ${embedded.providerId})`,
+    };
+  }
+  return {
+    providerId: LOCAL_EXECUTOR_PROVIDER_ID,
+    routedVia: 'in-process executor via the durable job runner (local-executor provider)',
   };
 }
 
@@ -623,7 +643,7 @@ registerExecutor({
           costUsd: null,
           costBasis: 'not-observable (provider pricing not exposed)',
           note: `modeled estimate: $0.01 × ${analysis.usage.llmCalls} real llmCalls = $${(0.01 * analysis.usage.llmCalls).toFixed(2)} (labeled modeled; see benchmark MODELED_STAGE_COST)`,
-        }),
+        }, routingLabels(input)),
       },
       entities: [
         { type: 'twin', id: twin.id },
@@ -737,6 +757,11 @@ registerExecutor({
     await ctx.report({ steps: steps.running('render', adapter), progress: 0.25 });
     // W2.C compute-broker bookkeeping: adapter-aware quote (svg-portrait-1 is
     // zero-deterministic + local-only; ai-image-1 is modeled-cost provider egress).
+    // P6.C3: the per-job provider override from the broker's embedded routing
+    // record (dashscope-render → the hosted render seam; local/absent → the
+    // YOU_RENDER_PROVIDER env seam keeps deciding, C2 law unchanged).
+    const routed = routedRenderProvider(input);
+    const routing = routingLabels(input);
     const computeQuote = await executionComputeQuote('render.image', ctx, input, adapter);
     await ctx.report({
       steps: steps.running('render', `${adapter} — ${quoteSummary(computeQuote.quote, computeQuote.phase)}`),
@@ -782,7 +807,7 @@ registerExecutor({
         note: 'deterministic local renderer — no provider involved; measured in-process latency, zero marginal cost is an observable fact',
       };
     } else {
-      const result = await renderPortraitImage(htir, style);
+      const result = await renderPortraitImage(htir, style, routed !== undefined ? { provider: routed } : {});
       latencyMs = result.latencyMs;
       const artifact = await db.outputArtifact.create({
         data: {
@@ -883,7 +908,7 @@ registerExecutor({
     await recordUsage(ctx.tenantId, 'job.render.image', 1, { renderJobId: job.id, adapterId: adapter });
 
     return {
-      output: { artifactId, solutionArtifactId: solutionId, adapterId: adapter, latencyMs, costUsd, compute: computeRecord(computeQuote, computeObserved) },
+      output: { artifactId, solutionArtifactId: solutionId, adapterId: adapter, latencyMs, costUsd, compute: computeRecord(computeQuote, computeObserved, routing) },
       entities: [
         { type: 'renderJob', id: job.id },
         { type: 'outputArtifact', id: artifactId },
@@ -995,6 +1020,11 @@ registerExecutor({
     await ctx.report({ steps: steps.running('video', 'provider task + bounded poll (≤10 min)'), progress: 0.25 });
     // W2.C compute-broker bookkeeping: quote for the routed workload
     // (ai-video-1 provider egress; latency from observed history when present).
+    // P6.C3: per-job provider override from the broker's embedded routing
+    // record (dashscope-render → the hosted render seam for BOTH the task
+    // creation and its polls; local/absent → the env seam, C2 law unchanged).
+    const routed = routedRenderProvider(input);
+    const routing = routingLabels(input);
     const computeQuote = await executionComputeQuote('render.video', ctx, input, AI_VIDEO_ADAPTER.adapterId);
     await ctx.report({
       steps: steps.running('video', `provider task + bounded poll (≤10 min) — ${quoteSummary(computeQuote.quote, computeQuote.phase)}`),
@@ -1002,7 +1032,7 @@ registerExecutor({
     });
     let result;
     try {
-      result = await renderPortraitVideo({ htir, style, baseImage });
+      result = await renderPortraitVideo({ htir, style, baseImage, ...(routed !== undefined ? { provider: routed } : {}) });
     } catch (e) {
       await db.renderJob.update({
         where: { id: job.id },
@@ -1195,7 +1225,7 @@ registerExecutor({
           costUsd: null,
           costBasis: 'not-observable (provider pricing not exposed)',
           note: `modeled estimate $0.1 lives in the artifact meta (costUsdModeled: true); provider waited ${result.waitedMs}ms is measured — never recorded as observed cost`,
-        }),
+        }, routing),
       },
       entities: [
         { type: 'renderJob', id: job.id },
