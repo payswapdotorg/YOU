@@ -29,7 +29,7 @@ export type ApiKeyId = string;
 // ─── Jobs (durable, no fabricated progress) ──────────────────────────────────
 export type JobState =
   | 'queued' | 'provisioning' | 'running' | 'collecting'
-  | 'succeeded' | 'failed' | 'cancelled' | 'unavailable';
+  | 'succeeded' | 'failed' | 'cancelled' | 'unavailable' | 'dead';
 
 export type JobKind =
   | 'capture.quality'
