@@ -13,7 +13,7 @@
 // - REAL total latency is measured; provider cost is a modeled estimate.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { HTIR, RenderStyle } from '../contracts';
-import { renderCreateVideoTask, renderPollVideoTask } from '../ai/render-provider';
+import { renderCreateVideoTask, renderPollVideoTask, type RenderProvider } from '../ai/render-provider';
 import { getObject, putObject } from '../core/storage';
 
 export const AI_VIDEO_ADAPTER = {
@@ -33,6 +33,14 @@ export interface AiVideoOptions {
   /** raster image artifact to animate, when available */
   baseImage?: { storageKey: string; mime: string } | null;
   maxWaitMs?: number;
+  /**
+   * Per-job render provider override (P6.C3 broker routing): 'dashscope' when
+   * the compute broker routed this job to the hosted provider; undefined = the
+   * YOU_RENDER_PROVIDER env seam decides (C2 law, unchanged). Applies to BOTH
+   * the task creation and its polls (the poll must hit the provider that
+   * created the task).
+   */
+  provider?: RenderProvider;
 }
 
 export interface AiVideoResult {
@@ -85,17 +93,21 @@ export async function renderPortraitVideo(opts: AiVideoOptions): Promise<AiVideo
     usedImageBase = true;
   }
 
-  const task = await renderCreateVideoTask({
-    prompt,
-    ...(imageDataUrl ? { image_url: imageDataUrl } : {}),
-    quality: 'speed',
-    duration: 5,
-    fps: 30,
-    with_audio: false,
-  });
+  const providerOpts = opts.provider !== undefined ? { provider: opts.provider } : {};
+  const task = await renderCreateVideoTask(
+    {
+      prompt,
+      ...(imageDataUrl ? { image_url: imageDataUrl } : {}),
+      quality: 'speed',
+      duration: 5,
+      fps: 30,
+      with_audio: false,
+    },
+    providerOpts,
+  );
 
   const maxWait = opts.maxWaitMs ?? 600_000;
-  const polled = await renderPollVideoTask(task.taskId, maxWait);
+  const polled = await renderPollVideoTask(task.taskId, maxWait, providerOpts);
   const waitedMs = polled.waitedMs;
 
   if (polled.status === 'timeout') {

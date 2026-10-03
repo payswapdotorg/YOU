@@ -11,7 +11,7 @@
 //   any cost number in meta is an explicitly-labeled modeled estimate.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { HTIR, RenderStyle } from '../contracts';
-import { renderGenerateImage } from '../ai/render-provider';
+import { renderGenerateImage, type RenderProvider } from '../ai/render-provider';
 import { putObject } from '../core/storage';
 
 export const AI_IMAGE_ADAPTER = {
@@ -79,12 +79,26 @@ export interface AiImageResult {
   meta: Record<string, unknown>;
 }
 
-export async function renderPortraitImage(htir: HTIR, style: RenderStyle): Promise<AiImageResult> {
+export interface AiImageOptions {
+  /**
+   * Per-job render provider override (P6.C3 broker routing): 'dashscope' when
+   * the compute broker routed this job to the hosted provider; undefined = the
+   * YOU_RENDER_PROVIDER env seam decides (C2 law, unchanged).
+   */
+  provider?: RenderProvider;
+}
+
+export async function renderPortraitImage(htir: HTIR, style: RenderStyle, opts: AiImageOptions = {}): Promise<AiImageResult> {
   const prompt = buildImagePrompt(htir, style);
   // P6.C2: the ONE image-generation call site — the render provider seam
-  // resolves YOU_RENDER_PROVIDER (station | dashscope) and returns the
-  // provider-audited result (provider/model/taskId recorded in meta below).
-  const { base64, latencyMs, provider, model, taskId } = await renderGenerateImage(prompt, PORTRAIT_SIZE);
+  // resolves YOU_RENDER_PROVIDER (station | dashscope), or the per-job broker
+  // routing override (P6.C3), and returns the provider-audited result
+  // (provider/model/taskId recorded in meta below).
+  const { base64, latencyMs, provider, model, taskId } = await renderGenerateImage(
+    prompt,
+    PORTRAIT_SIZE,
+    opts.provider !== undefined ? { provider: opts.provider } : {},
+  );
   const buf = Buffer.from(base64, 'base64');
   const stored = await putObject(buf, { kind: 'render', mime: 'image/png' });
   return {

@@ -673,6 +673,8 @@ export const ERR = {
   VALIDATION: 'validation_failed',
   CONFLICT: 'conflict',
   RATE_LIMITED: 'rate_limited',
+  COMPUTE_QUOTA_EXCEEDED: 'compute_quota_exceeded',
+  COMPUTE_QUOTA_UNVERIFIABLE: 'compute_quota_unverifiable',
   POLICY: 'policy_blocked',
   SERVICE_UNAVAILABLE: 'service_unavailable',
   INTERNAL: 'internal_error',
