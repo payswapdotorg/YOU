@@ -50,5 +50,12 @@ import './contract/compute-broker.test.mjs';
 // failure disclosure, 8-step protocol coverage aggregation, TwinVersion
 // provenance linkage, determinism; no app boot, no network, no db)
 import './contract/f1-recon.test.mjs';
+// P6.B3 F1 operator capture flow suite (imported statically — boots/reuses
+// the shared app server like the W4.A hardening suite: consent-gate
+// enforcement at the API level, protocol persistence, manifest
+// content-addressing, review promotion, deletion/export flow; the only DB
+// seeding is the f1.reconstruct terminal state, mirroring the executor's
+// row shape — no network beyond 127.0.0.1)
+import './contract/f1-operator-flow.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

@@ -220,6 +220,15 @@ export interface CaptureSessionView {
   createdAt: string;
   completedAt?: string | null;
   assets: EvidenceAssetView[];
+  // ── P6.B3 lane-widening (additive, optional): guided F1 flow state ────────
+  // Present only on sessions created via POST /twins/:id/capture-sessions/f1;
+  // every legacy session returns these as null and behaves exactly as before.
+  consentGrantId?: string | null;
+  protocol?: F1ProtocolState | null;
+  checkpoints?: Record<string, unknown> | null;
+  manifest?: F1EvidenceManifest | null;
+  retention?: F1ConsentStatements['retention'] & { deletionProcess?: string } | null;
+  review?: F1ReviewState | null;
 }
 
 // ─── Consent (explicit, scoped, revocable, server-enforced) ─────────────────
@@ -237,9 +246,147 @@ export interface ConsentGrantView {
   scopes: ConsentScope[];
   operations: string[];
   outputs: string[]; // derived-only by default; raw evidence never included
+  // P6.B3 lane-widening (additive, optional): the F1 operator-capture
+  // statements recorded with the grant (docs/F1_OPERATOR_CAPTURE.md
+  // "Required consent"). null/absent for every pre-B3 grant — the F1 guided
+  // flow's server-side gate refuses those with a machine-readable
+  // missingStatements list instead of silently passing.
+  statements?: F1ConsentStatements | null;
   expiresAt: string;
   revokedAt?: string | null;
   createdAt: string;
+}
+
+// ─── F1 operator capture flow (P6.B3, docs/F1_OPERATOR_CAPTURE.md) ──────────
+
+/** The six consent statements F1 capture consent must explicitly state. */
+export interface F1ConsentStatements {
+  /** what is captured */
+  what: string;
+  /** why it is captured */
+  why: string;
+  /** which product tests will use it (≥1) */
+  tests: string[];
+  /** whether the sample may be retained, under which policy, and until when */
+  retention: {
+    mayBeRetained: boolean;
+    /** ISO date — retention window while the grant is active */
+    retainUntil?: string;
+    /** the stated retention policy (free text, shown to the subject) */
+    policy: string;
+  };
+  /** training permission — SEPARATE and default-DENIED */
+  training: { permitted: boolean; note?: string };
+  /** the deletion/withdrawal process */
+  deletion: string;
+}
+
+/** Per-step state of the guided 8-step protocol. */
+export type F1StepState = 'pending' | 'current' | 'done' | 'skipped';
+
+/** One guided step, with the ACTUAL persisted operator instruction text. */
+export interface F1GuidedStep {
+  step: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  id: string;
+  label: string;
+  /** operator-facing instruction — persisted verbatim with the capture
+   * (docs/F1_OPERATOR_CAPTURE.md: "the actual instructions for the acceptance
+   * fixture must be persisted with the capture") */
+  instruction: string;
+  /** canonical regions this step machines as evidence */
+  regions: CaptureRegion[];
+  /** honest disclosure where the wave-1 region model coarse-grains framings */
+  coarseGrainingNote?: string;
+  /** steps 1–7 are required; step 8 (speech/performance) is optional */
+  required: boolean;
+  state: F1StepState;
+  skipReason?: string;
+  assetId?: string;
+  contentHash?: string;
+  checkpoint?: F1StepCheckpoint;
+  submittedAt?: string;
+}
+
+/** The persisted protocol document on a guided capture session. */
+export interface F1ProtocolState {
+  version: 'f1-operator-capture/v1';
+  source: 'docs/F1_OPERATOR_CAPTURE.md';
+  steps: F1GuidedStep[];
+  currentStepId: string | null;
+}
+
+/**
+ * Per-step quality/liveness checkpoint (heuristic, byte-level — mirrors the
+ * C-lane f1LivenessCheckpoint taxonomy). Honest by construction: every check
+ * is named, region coverage is DECLARED (not machine-observed), and video/
+ * audio duration is disclosed as not verifiable at this wave.
+ */
+export interface F1StepCheckpoint {
+  stepId: string;
+  assetId?: string;
+  passed: boolean;
+  checks: {
+    filePresent: boolean;
+    plausibleSize: boolean;
+    decodable: boolean;
+    plausibleAspect: boolean | null; // null when the container carries no dims (video/audio)
+    requiredRegionsCovered: 'declared' | 'none';
+  };
+  sniffed?: { container: string; mimeFamily: string; canonicalMime: string; width?: number; height?: number };
+  refusal?: { code: string; message: string };
+  issues: string[];
+  score: number; // 0..1 — honest heuristic score over the named checks
+}
+
+/** Content-addressed evidence manifest persisted at guided-flow completion. */
+export interface F1EvidenceManifest {
+  version: 'f1-evidence-manifest/v1';
+  algorithm: 'sha256';
+  captureSessionId: CaptureSessionId;
+  provenance: {
+    twinId: TwinId;
+    subjectId: string;
+    consentGrantId: string;
+    capturedVia: 'f1-guided-flow/v1';
+  };
+  deletionPolicy: F1ConsentStatements['retention'] & { deletionProcess: string };
+  assets: {
+    assetId: EvidenceAssetId;
+    stepId: string | null;
+    storageKey: string;
+    contentHash: string;
+    /** re-hashed from the stored bytes at manifest-build time */
+    verified: boolean;
+    bytes: number;
+    mime: string;
+    regions: CaptureRegion[];
+    checkpointPassed: boolean | null;
+  }[];
+  totals: { assets: number; verified: number; bytes: number };
+  builtAt: string;
+}
+
+/** Review state + the F1 acceptance chain (capture → … → review). */
+export interface F1ReviewState {
+  status: 'none' | 'promoted' | 'rejected';
+  verdict?: 'approve' | 'reject';
+  note?: string;
+  reviewerActorType?: string;
+  reviewerActorId?: string;
+  decidedAt?: string;
+  twinVersionId?: TwinVersionId;
+  twinVersionNumber?: number;
+  chain?: F1AcceptanceChain;
+}
+
+/** The acceptance chain recorded at promotion (docs/F1_OPERATOR_CAPTURE.md). */
+export interface F1AcceptanceChain {
+  capture: { captureSessionId: CaptureSessionId; createdAt: string; completedAt: string | null };
+  consent: { grantId: ConsentGrantId; statements: F1ConsentStatements };
+  liveness: { stepsChecked: number; refusals: number; summary: string };
+  quality: { stepsDone: number; stepsSkipped: number; skippedRequired: string[]; score: number | null };
+  reconstruction: { twinVersionId: TwinVersionId; version: number; compiledBy?: string; pipelineId?: string | null };
+  review: { verdict: 'approve' | 'reject'; note?: string; decidedAt: string };
 }
 
 // ─── Twin ────────────────────────────────────────────────────────────────────

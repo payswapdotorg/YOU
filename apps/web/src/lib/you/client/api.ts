@@ -4,6 +4,7 @@ import type {
   AgentAvatarSessionView, AgentBodyView, AgentSoulView, ApiKeySecret, ApiKeyView,
   BenchmarkRunView, CaptureSessionView, ConsentGrantView, EventRecordView,
   EvidenceAssetView, EvidenceRequestView, FailureCaseView, FeedbackRequestView,
+  F1ConsentStatements, F1EvidenceManifest, F1ReviewState, F1StepCheckpoint,
   JobView, LabObjectiveView, OverviewStats, PerformanceView, PipelineCandidateView,
   PromotionRecordView, RenderJobView, RenderStyle, SessionInfo, SolutionArtifactView,
   TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary,
@@ -196,6 +197,38 @@ export const api = {
     complete: (id: string, idem?: string) =>
       call<{ jobId: string }>(`/captures/${id}/complete`, { method: 'POST', idempotencyKey: idem }),
     signEvidence: (assetId: string) => call<{ url: string; expiresAt: string }>(`/evidence/${assetId}/url`),
+    // ── P6.B3 — the guided F1 operator capture flow ──────────────────
+    f1: {
+      start: (twinId: string, idem?: string) =>
+        call<CaptureSessionView>(`/twins/${twinId}/capture-sessions/f1`, { method: 'POST', body: '{}', idempotencyKey: idem }),
+      submitStep: (id: string, stepId: string, file: File) => {
+        const form = new FormData();
+        form.append('file', file);
+        return call<CaptureSessionView & {
+          submitted: { stepId: string; assetId: string; contentHash: string; checkpoint: F1StepCheckpoint };
+          consent: { grantId: string; trainingPermitted: boolean };
+        }>(`/captures/${id}/f1/steps/${stepId}/submit`, { method: 'POST', body: form });
+      },
+      skipStep: (id: string, stepId: string, reason: string) =>
+        call<CaptureSessionView & { skipped: { stepId: string; reason: string; required: boolean } }>(
+          `/captures/${id}/f1/steps/${stepId}/skip`,
+          { method: 'POST', body: JSON.stringify({ reason }) },
+        ),
+      complete: (id: string, idem?: string) =>
+        call<CaptureSessionView & { summary: Record<string, unknown>; manifest: F1EvidenceManifest }>(
+          `/captures/${id}/f1/complete`, { method: 'POST', idempotencyKey: idem },
+        ),
+      review: (id: string, body: { verdict: 'approve' | 'reject'; note?: string }, idem?: string) =>
+        call<CaptureSessionView & { review: F1ReviewState }>(`/captures/${id}/f1/review`, {
+          method: 'POST', body: JSON.stringify(body), idempotencyKey: idem,
+        }),
+      remove: (id: string) => call<{
+        deleted: boolean; captureSessionId: string; assetsDeleted: number;
+        objectsDeleted: number; objectsRetained: number; retainedKeys: string[];
+        twinVersionsRemain: { id: string; version: number }[]; disclosure: string;
+      }>(`/captures/${id}/f1`, { method: 'DELETE' }),
+      exportUrl: (id: string) => `/api/v1/captures/${id}/f1/export`,
+    },
   },
 
   // ─── Consent ──────────────────────────────────────────────────────────────
@@ -204,6 +237,8 @@ export const api = {
     grant: (body: {
       subjectId: string; purpose: string; scopes: ConsentScope[];
       operations?: string[]; outputs?: string[]; ttlHours?: number;
+      /** P6.B3 — optional F1 operator-capture statements (guided-flow gate). */
+      statements?: F1ConsentStatements;
     }, idem?: string) =>
       call<ConsentGrantView>('/consent-grants', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     revoke: (id: string) => call<void>(`/consent-grants/${id}`, { method: 'DELETE' }),

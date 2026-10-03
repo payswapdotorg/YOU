@@ -17,6 +17,7 @@ import type { CaptureSessionView } from '@/lib/you/contracts';
 import { Camera, RotateCw, UserRound } from 'lucide-react';
 import { ConsentGrantDialog } from '../build/consent-dialog';
 import { CaptureSessionPanel } from '../build/capture-session-panel';
+import { F1CaptureFlow } from '../build/f1-capture-flow';
 import { QueryError, RowSkeletons } from '../build/confidence';
 import { timeAgo } from '../build/format';
 
@@ -186,14 +187,23 @@ export function CapturesView() {
                 </Button>
                 <span className="you-num">created {timeAgo(openSession.createdAt)}</span>
               </div>
-              <CaptureSessionPanel
-                twinId={openSession.twinId}
-                session={openSession}
-                onConsentRequired={(hint) => {
-                  const twin = twinById.get(openSession.twinId);
-                  if (twin) setConsentSubject({ subjectId: twin.subjectId, hint, twinName: twin.displayName });
-                }}
-              />
+              {openSession.protocol ? (
+                <F1CaptureFlow
+                  twinId={openSession.twinId}
+                  twinName={openTwin?.displayName}
+                  subjectId={openTwin?.subjectId}
+                  session={openSession}
+                />
+              ) : (
+                <CaptureSessionPanel
+                  twinId={openSession.twinId}
+                  session={openSession}
+                  onConsentRequired={(hint) => {
+                    const twin = twinById.get(openSession.twinId);
+                    if (twin) setConsentSubject({ subjectId: twin.subjectId, hint, twinName: twin.displayName });
+                  }}
+                />
+              )}
             </div>
           ) : null}
         </DialogContent>

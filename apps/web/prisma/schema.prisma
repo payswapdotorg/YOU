@@ -97,6 +97,12 @@ model ConsentGrant {
   scopes     String    @default("[]") // JSON: e.g. ["capture","reconstruct","render","embodiment"]
   operations String    @default("[]") // JSON: allowed operations
   outputs    String    @default("[]") // JSON: allowed output classes (derived only by default)
+  // P6.B3 — F1 operator-capture statements (docs/F1_OPERATOR_CAPTURE.md
+  // "Required consent"): what is captured / why / which product tests /
+  // retention / training (separate, DEFAULT-DENIED) / deletion+withdrawal.
+  // "{}" for every pre-B3 grant — the F1 guided flow refuses those with a
+  // machine-readable missingStatements list instead of silently passing.
+  statements String    @default("{}") // JSON: F1ConsentStatements | {}
   expiresAt  DateTime
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
@@ -160,6 +166,16 @@ model CaptureSession {
   error        String?
   createdAt    DateTime  @default(now())
   completedAt  DateTime?
+
+  // ── P6.B3 — F1 operator guided flow (docs/F1_OPERATOR_CAPTURE.md) ──────────
+  // Only set on sessions created through POST /twins/:id/capture-sessions/f1;
+  // every legacy session keeps the defaults and behaves exactly as before.
+  consentGrantId String? // the ACTIVE F1-statement-covered grant (re-verified on every advance; provenance)
+  protocol       String? // JSON: F1ProtocolState — the 8 steps, per-step state and the PERSISTED instruction text
+  checkpoints    String? // JSON: overall liveness/quality checkpoint summary (per-step reports live in protocol.steps)
+  manifest       String? // JSON: content-addressed evidence manifest (built at f1/complete; every asset sha256-verified)
+  retention      String? // JSON: effective retention/deletion policy snapshot from the covering consent statements
+  review         String  @default("{}") // JSON: F1ReviewState — review verdict + TwinVersion linkage + acceptance chain
 
   tenant  Tenant          @relation(fields: [tenantId], references: [id])
   twin    Twin            @relation(fields: [twinId], references: [id])

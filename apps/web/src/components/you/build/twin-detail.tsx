@@ -16,7 +16,7 @@ import { EmptyState, IdChip, StatusBadge } from '@/components/you/shared/primiti
 import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/degraded-state';
 import { useJob } from '@/hooks/you/use-job';
 import { useYouStore } from '@/hooks/you/use-you-store';
-import { api, uid } from '@/lib/you/client/api';
+import { api, uid, YouApiError } from '@/lib/you/client/api';
 import type { CaptureSessionView, TwinView, TwinVersionView } from '@/lib/you/contracts';
 import {
   ArrowLeft, Camera, FileBox, GitBranch, GitCompareArrows, Hammer, History,
@@ -27,6 +27,8 @@ import { cn } from '@/lib/utils';
 import { ConfidenceBar, QueryError, RowSkeletons } from './confidence';
 import { ConsentGrantDialog } from './consent-dialog';
 import { CaptureSessionPanel } from './capture-session-panel';
+import { F1CaptureFlow } from './f1-capture-flow';
+import { F1ConsentGateDialog } from './f1-consent-dialog';
 import { EvidenceRequestCard } from './evidence-request-card';
 import { HtirInspector } from './htir-inspector';
 import { JobStepsPanel } from './job-panel';
@@ -83,6 +85,10 @@ export function TwinDetail({
 
   const [consentOpen, setConsentOpen] = useState(false);
   const [consentHint, setConsentHint] = useState<string | undefined>();
+  // P6.B3 — guided F1 capture flow consent gate (the six F1 statements)
+  const [f1ConsentOpen, setF1ConsentOpen] = useState(false);
+  const [f1ConsentHint, setF1ConsentHint] = useState<string | undefined>();
+  const [f1MissingStatements, setF1MissingStatements] = useState<string[] | undefined>();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
@@ -165,6 +171,35 @@ export function TwinDetail({
     },
     onError: (err) => {
       toast.error('Could not start capture session', { description: err instanceof Error ? err.message : 'Unexpected error' });
+    },
+  });
+
+  // P6.B3 — start the GUIDED F1 capture flow (consent gate enforced server-
+  // side; a consent_required refusal opens the F1 statements dialog with the
+  // machine-readable missingStatements list)
+  const startF1 = useMutation({
+    mutationFn: () => api.captures.f1.start(twinId, uid()),
+    onSuccess: (session) => {
+      toast.success('Guided F1 capture started', {
+        description: 'Walk the subject through the 8 steps — instructions are persisted with the capture.',
+      });
+      onFocusSession(session.id);
+      void qc.invalidateQueries({ queryKey: ['twin', twinId] });
+      void qc.invalidateQueries({ queryKey: ['captures'] });
+      void qc.invalidateQueries({ queryKey: ['overview'] });
+    },
+    onError: (err) => {
+      if (err instanceof YouApiError && err.code === 'consent_required') {
+        const rec = err.details && typeof err.details === 'object' ? (err.details as Record<string, unknown>) : null;
+        const missing = Array.isArray(rec?.missingStatements)
+          ? (rec?.missingStatements as string[])
+          : Array.isArray(rec?.invalidStatements) ? (rec?.invalidStatements as string[]) : [];
+        setF1ConsentHint(err.message);
+        setF1MissingStatements(missing.length > 0 ? missing : undefined);
+        setF1ConsentOpen(true);
+        return;
+      }
+      toast.error('Could not start guided F1 capture', { description: err instanceof Error ? err.message : 'Unexpected error' });
     },
   });
 
@@ -428,16 +463,31 @@ export function TwinDetail({
               <span className="you-num font-medium text-foreground">{sessions.length}</span> sessions ·{' '}
               <span className="you-num font-medium text-foreground">{evidenceCount}</span> evidence assets
             </p>
-            <Button
-              size="sm"
-              onClick={() => startSession.mutate()}
-              disabled={startSession.isPending || (consentQ.isSuccess && !hasCaptureConsent)}
-              className="gap-1.5"
-              title={consentQ.isSuccess && !hasCaptureConsent ? 'Grant consent first' : undefined}
-            >
-              {startSession.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Plus className="size-3.5" aria-hidden />}
-              Start capture session
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* P6.B3 — the guided F1 flow (docs/F1_OPERATOR_CAPTURE.md): the
+                  consent gate with the six statements opens on refusal */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => startF1.mutate()}
+                disabled={startF1.isPending || startSession.isPending}
+                className="gap-1.5"
+                title="Guided 8-step F1 capture — consent-gated with the six required statements"
+              >
+                {startF1.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Camera className="size-3.5" aria-hidden />}
+                Guided F1 capture
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => startSession.mutate()}
+                disabled={startSession.isPending || startF1.isPending || (consentQ.isSuccess && !hasCaptureConsent)}
+                className="gap-1.5"
+                title={consentQ.isSuccess && !hasCaptureConsent ? 'Grant consent first' : undefined}
+              >
+                {startSession.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Plus className="size-3.5" aria-hidden />}
+                Start capture session
+              </Button>
+            </div>
           </div>
 
           {orderedActive.length === 0 && doneSessions.length === 0 ? (
@@ -450,11 +500,20 @@ export function TwinDetail({
 
           {orderedActive.map((session) => (
             <div key={session.id} className={cn(focusSessionId === session.id && 'rounded-xl ring-2 ring-emerald-500/35 ring-offset-2 ring-offset-background')}>
-              <CaptureSessionPanel
-                twinId={twinId}
-                session={session}
-                onConsentRequired={(hint) => { setConsentHint(hint); setConsentOpen(true); }}
-              />
+              {session.protocol ? (
+                <F1CaptureFlow
+                  twinId={twinId}
+                  twinName={twin.displayName}
+                  subjectId={twin.subjectId}
+                  session={session}
+                />
+              ) : (
+                <CaptureSessionPanel
+                  twinId={twinId}
+                  session={session}
+                  onConsentRequired={(hint) => { setConsentHint(hint); setConsentOpen(true); }}
+                />
+              )}
             </div>
           ))}
 
@@ -490,6 +549,24 @@ export function TwinDetail({
         subjectId={twin.subjectId}
         purpose={`Create and reconstruct digital twin “${twin.displayName}”`}
         missingScopeHint={consentHint}
+      />
+
+      {/* P6.B3 — F1 consent gate (the six operator-capture statements) */}
+      <F1ConsentGateDialog
+        open={f1ConsentOpen}
+        onOpenChange={(o) => !o && setF1ConsentOpen(false)}
+        subjectId={twin.subjectId}
+        twinName={twin.displayName}
+        missingHint={f1ConsentHint}
+        missingStatements={f1MissingStatements}
+        onGranted={() => {
+          setF1ConsentOpen(false);
+          setF1ConsentHint(undefined);
+          setF1MissingStatements(undefined);
+          void qc.invalidateQueries({ queryKey: ['consent'] });
+          // retry the guided flow with the statement-covered grant
+          startF1.mutate();
+        }}
       />
 
       {/* Compile job dialog */}
