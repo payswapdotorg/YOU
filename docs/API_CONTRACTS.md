@@ -15,6 +15,7 @@ DELETE /twins/:id
 POST /captures
 GET /captures/:id
 POST /captures/:id/complete
+POST /captures/:id/reconstruct
 GET /captures/:id/evidence
 
 ## Performances

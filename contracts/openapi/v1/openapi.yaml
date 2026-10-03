@@ -76,6 +76,10 @@ paths:
     post:
       summary: Capture sessions — complete
       responses: {"202": {"description": "Accepted"}}
+  /captures/{id}/reconstruct:
+    post:
+      summary: Capture sessions — F1 reconstruction (consent-gated, P6.C4)
+      responses: {"202": {"description": "Accepted"}}
   /consent-grants:
     get:
       summary: Consent grants

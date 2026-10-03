@@ -36,7 +36,8 @@ export type JobKind =
   | 'render.video'         // HTIR(+performance) → video artifact
   | 'performance.fromText' // dialog text → performance tracks
   | 'lab.benchmark'        // objective → org comparison evidence
-  | 'template.analyze';    // template manifest → coverage analysis (W2.B, landed 2026-10-01 per w2a-report compat note 2)
+  | 'template.analyze'    // template manifest → coverage analysis (W2.B, landed 2026-10-01 per w2a-report compat note 2)
+  | 'f1.reconstruct';     // real-human F1 reconstruction pipeline (P6.C4)
 
 export interface JobStep {
   key: string;
@@ -87,7 +88,7 @@ export interface HtirProvenance {
   evidenceHashes: string[]; // sha256 of each input asset, in order
   pipeline: { pipelineId: string; components: { adapterId: string; version: string }[] };
   compiledAt: string;
-  compiledBy: 'twin.compile';
+  compiledBy: 'twin.compile' | 'f1.reconstruct';
 }
 
 export interface HtirConfidenceDeficiency {

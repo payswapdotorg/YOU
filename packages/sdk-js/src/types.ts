@@ -38,7 +38,8 @@ export type JobKind =
   | 'render.video'
   | 'performance.fromText'
   | 'lab.benchmark'
-  | 'template.analyze';
+  | 'template.analyze'
+  | 'f1.reconstruct';
 
 export interface JobStep {
   key: string;
@@ -76,7 +77,7 @@ export interface HtirProvenance {
   evidenceHashes: string[];
   pipeline: { pipelineId: string; components: { adapterId: string; version: string }[] };
   compiledAt: string;
-  compiledBy: 'twin.compile';
+  compiledBy: 'twin.compile' | 'f1.reconstruct';
 }
 
 export interface HtirConfidenceDeficiency {
