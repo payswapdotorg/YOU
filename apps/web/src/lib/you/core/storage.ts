@@ -64,6 +64,10 @@ const MIME_TO_EXT: Record<string, string> = {
   'application/json': 'json',
   'text/plain': 'txt',
   'text/csv': 'csv',
+  // P6.C9 — game/AR exports: glTF 2.0 binary containers (GLB and VRM-in-GLB;
+  // the registered IANA type covers both — the VRM distinction lives in the
+  // artifact kind + export manifest, and the package README documents it).
+  'model/gltf-binary': 'glb',
 };
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -81,6 +85,8 @@ const EXT_TO_MIME: Record<string, string> = {
   json: 'application/json',
   txt: 'text/plain',
   csv: 'text/csv',
+  glb: 'model/gltf-binary',
+  vrm: 'model/gltf-binary',
 };
 
 export function extFromMime(mime: string): string {

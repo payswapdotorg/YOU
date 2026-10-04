@@ -225,6 +225,37 @@ export interface MetricsView {
   jobs: Record<string, number>;
 }
 
+// ─── P6.B9 — API playground surfaces (the Develop playground routes) ────────
+
+/** Sandbox/test-mode resolution as GET /api/v1/develop/playground reports it. */
+export interface PlaygroundSandboxState {
+  configured: boolean;
+  requested: boolean;
+  available: boolean;
+  mode: 'live' | 'sandbox';
+  reason: string;
+}
+
+/** GET /api/v1/develop/playground response. */
+export interface PlaygroundStatusView {
+  sandbox: PlaygroundSandboxState;
+  envVar: string;
+  inventoryCount: number;
+}
+
+/** POST /api/v1/develop/playground/execute success envelope. */
+export interface PlaygroundExecuteResult {
+  operation: { method: string; path: string };
+  resolvedPath: string;
+  sandbox: boolean;
+  status: number;
+  statusText: string;
+  durationMs: number;
+  headers: { name: string; value: string }[];
+  body: string;
+  bodyTruncated?: boolean;
+}
+
 // ─── Session ─────────────────────────────────────────────────────────────────
 export const api = {
   session: {
@@ -512,6 +543,21 @@ export const api = {
     createWebhook: (body: { url: string; events: string[] }, idem?: string) =>
       call<WebhookEndpointView>('/webhooks', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     deleteWebhook: (id: string) => call<void>(`/webhooks/${id}`, { method: 'DELETE' }),
+    // P6.B9 — the executable API playground (frozen-inventory operations,
+    // API-level mutation confirmation, honest sandbox surface).
+    playgroundStatus: () => call<PlaygroundStatusView>('/develop/playground'),
+    playgroundExecute: (body: {
+      method: 'get' | 'post' | 'put' | 'patch' | 'delete';
+      path: string;
+      pathParams?: Record<string, string>;
+      query?: Record<string, string>;
+      body?: string;
+      mutationAcknowledged?: boolean;
+      sandbox?: boolean;
+    }) => call<PlaygroundExecuteResult>('/develop/playground/execute', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   },
 
   // ─── Artifacts / feedback loop ────────────────────────────────────────────

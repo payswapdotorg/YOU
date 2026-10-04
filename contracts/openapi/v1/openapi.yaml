@@ -287,6 +287,25 @@ paths:
     get:
       summary: Try-on garments — garment detail (P6.C8)
       responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /exports:
+    get:
+      summary: Game/AR exports — list export jobs with honest claims text (P6.C9)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}}
+    post:
+      summary: Game/AR exports — create GLB/VRM export (reconstruct-scope consent, durable export.glb/export.vrm job, idempotent replay; P6.C9)
+      responses: {"202": {"description": "Accepted"}, "400": {"description": "Bad Request"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+  /exports/{id}:
+    get:
+      summary: Game/AR exports — job detail + artifact bundle (GLB/VRM signed URL, retargeting mapping, structural-vs-derived manifest, honest package manifest; P6.C9)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /develop/playground:
+    get:
+      summary: Develop playground — sandbox status + frozen-inventory count (P6.B9)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}}
+  /develop/playground/execute:
+    post:
+      summary: Develop playground — execute an operation against the real API (mutation-confirmation gated, rate-limited; P6.B9)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "401": {"description": "Unauthorized"}, "409": {"description": "Conflict"}, "429": {"description": "Too Many Requests"}}
   /maintenance/dead-jobs:
     get:
       summary: Maintenance — list dead-lettered jobs (operator session)
