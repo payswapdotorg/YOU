@@ -92,6 +92,27 @@ import { evaluateOrganizations } from './benchmark';
 import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, routedRenderProvider, embeddedComputeRoutingOf, type ComputeQuote, type ComputeSubmission } from './compute';
 import { recordRegionFailures } from './failure-atlas';
 import { hashString, makeRng } from './determinism';
+// P6.C8 — virtual try-on: the provider-neutral adapter contract + pure
+// pipeline fold (adapters/try-on.ts). The executor composes it with the real
+// seams: content-addressed storage, the C2 render seam (baseline), the
+// hosted Vertex call (fail-closed behind YOU_TRYON_PROVIDER) and the recon
+// vision seam (identity-preservation comparisons).
+import {
+  TRYON_ADAPTER,
+  TRYON_RENDER_JOB_KIND,
+  TryOnRefusal,
+  VISUAL_ONLY_DISCLAIMER,
+  executeVertexTryOnCall,
+  parseVisionComparison,
+  resolveTryOnProvider,
+  runTryOnPipeline,
+  type TryOnFetch,
+  type TryOnPipelineProgress,
+  type TryOnProviderStatus,
+  type TryOnSuccess,
+} from '../adapters/try-on';
+import { reconVisionCompare } from '../ai/recon-provider';
+import { mimeFromKey } from '../core/storage';
 
 const registry = new Map<JobKind, JobExecutor>();
 
@@ -2371,3 +2392,317 @@ const agentTurnExecutor = {
 // inside ai/zai.ts chatComplete; job-level bounded retry + dead-letter in
 // core/jobs.ts runJob wrapping this executor.
 registerExecutor(agentTurnExecutor);
+
+// ═══════════════════════════════════════════════════════════════════════
+// tryon.render — virtual try-on (P6.C8, adapters/try-on.ts contract)
+//
+// The honest pipeline: fail-closed provider gate → consent re-verify →
+// baseline render (the C2 seam — a stylized avatar render derived from the
+// consented HTIR, the anti-impersonation prompt policy enforced there) →
+// hosted try-on call (person image + garment image) → content-addressed
+// store → diff manifest + identity-preservation report → ONE comparison
+// OutputArtifact (kind 'tryon-comparison') carrying BOTH renders, the
+// manifest, the report and the visual-only disclaimer (contract field).
+//
+// Without YOU_TRYON_PROVIDER the job FAILS HONESTLY at the provider step
+// with the verbatim reason — never a stub image, never a fabricated score.
+// 'tryon.completed' carries the merchant-callback shape (productRef +
+// artifact refs + the disclaimer) and fans out through the existing signed
+// webhook delivery path (F-04 X-You-Signature law).
+// ═══════════════════════════════════════════════════════════════════════
+
+async function loadTryOnJob(tryOnJobId: string, tenantId: string) {
+  const job = await db.tryOnJob.findUnique({
+    where: { id: tryOnJobId },
+    include: { twin: true, twinVersion: true, garmentAsset: true },
+  });
+  if (!job) throw new Error(`not_found: try-on job ${tryOnJobId}`);
+  if (job.tenantId !== tenantId) throw new Error(`forbidden: try-on job belongs to another tenant`);
+  if (!job.twin || !job.twinVersion) throw new Error(`not_found: twin version ${job.twinVersionId} for try-on job`);
+  if (!job.garmentAsset) throw new Error(`not_found: garment asset ${job.garmentAssetId} for try-on job`);
+  return job;
+}
+
+const TRYON_IDENTITY_PROMPT =
+  'You are shown two images: IMAGE 1 then IMAGE 2. Judge whether IMAGE 2 preserves the visual identity of the subject of IMAGE 1 (same person or same garment, as the caller specifies by context). Reply with ONLY a JSON object: {"score": <similarity 0.0-1.0>, "note": "<one short sentence>"}. Do not reply with anything else.';
+
+function toDataUrl(buf: Buffer, mime: string): string {
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+function tryOnTimeoutMs(): number {
+  const n = Number(process.env.YOU_TRYON_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 30_000;
+}
+
+registerExecutor({
+  kind: TRYON_RENDER_JOB_KIND,
+  async execute(input, ctx) {
+    const tryOnJobId = reqString(input, 'tryOnJobId');
+    const steps = new Steps([
+      ['validate', 'Load try-on job, twin version and garment'],
+      ['consent', 'Verify render consent (server-enforced)'],
+      ['provider', 'Resolve the try-on provider (fail-closed)'],
+      ['baseline', 'Render the twin baseline image (body-aware base)'],
+      ['tryon', 'Run the hosted virtual try-on'],
+      ['comparison', 'Build diff manifest + identity-preservation report'],
+      ['persist', 'Persist comparison artifact with the visual-only disclaimer'],
+    ]);
+
+    await ctx.report({ steps: steps.running('validate'), progress: 0.05, status: 'running' });
+    const job = await loadTryOnJob(tryOnJobId, ctx.tenantId);
+    const htir = parseJsonField<HTIR>(job.twinVersion.htir, null as unknown as HTIR);
+    if (!htir) throw new Error(`internal_error: twin version ${job.twinVersionId} has unparseable HTIR`);
+    const style = parseStyle(job.style, 'photorealistic');
+    await db.tryOnJob.update({ where: { id: job.id }, data: { status: 'running', startedAt: new Date() } });
+    steps.done(
+      'validate',
+      `twin ${job.twin.displayName} v${job.twinVersion.version}, garment "${job.garmentAsset.displayName}"${job.garmentAsset.productRef ? ` (ref ${job.garmentAsset.productRef})` : ''}`,
+    );
+    await ctx.report({ steps: steps.all(), progress: 0.1 });
+
+    await ctx.report({ steps: steps.running('consent'), progress: 0.12 });
+    const grants = await activeGrantsFor(job.twin.subjectId, job.twin.tenantId, 'render');
+    assertConsent(grants, job.twin.subjectId, 'render');
+    steps.done('consent', `${grants.length} active render-scope grant(s)`);
+    await ctx.report({ steps: steps.all(), progress: 0.15 });
+
+    // FAIL-CLOSED provider gate — BEFORE any provider spend (baseline render
+    // included). The typed refusal fails the job with the verbatim reason and
+    // the TryOnJob row records it (never left queued forever).
+    await ctx.report({ steps: steps.running('provider'), progress: 0.18 });
+    const providerStatus: TryOnProviderStatus = resolveTryOnProvider({
+      provider: process.env.YOU_TRYON_PROVIDER,
+      vertexProject: process.env.YOU_TRYON_VERTEX_PROJECT,
+      vertexLocation: process.env.YOU_TRYON_VERTEX_LOCATION,
+      vertexKey: process.env.YOU_TRYON_VERTEX_KEY,
+    });
+    if (!providerStatus.available) {
+      steps.failed('provider', providerStatus.reason);
+      await ctx.report({ steps: steps.all(), status: 'failed' }).catch(() => undefined);
+      await db.tryOnJob
+        .update({ where: { id: job.id }, data: { status: 'failed', error: providerStatus.reason, finishedAt: new Date() } })
+        .catch(() => undefined);
+      throw new TryOnRefusal('tryon_unavailable', providerStatus.reason);
+    }
+    steps.done('provider', `${providerStatus.provider} (project ${providerStatus.project}, location ${providerStatus.location})`);
+    await ctx.report({ steps: steps.all(), progress: 0.2 });
+
+    // the vision-comparison state: the reason is captured DURING the pipeline
+    // (getter) so the identity report quotes the real unavailability cause
+    const visionState: { reason?: string } = {};
+    const routed = routedRenderProvider(input);
+    const onProgress = async (p: TryOnPipelineProgress) => {
+      const map: Record<TryOnPipelineProgress['step'], string> = {
+        provider: 'provider',
+        baseline: 'baseline',
+        tryon: 'tryon',
+        comparison: 'comparison',
+      };
+      const progressByStep: Record<TryOnPipelineProgress['step'], number> = {
+        provider: 0.2,
+        baseline: 0.35,
+        tryon: 0.7,
+        comparison: 0.82,
+      };
+      await ctx.report({ steps: steps.running(map[p.step], p.detail), progress: progressByStep[p.step] }).catch(() => undefined);
+    };
+
+    let result: TryOnSuccess;
+    try {
+      result = await runTryOnPipeline(
+        { garmentStorageKey: job.garmentAsset.storageKey, garmentMime: job.garmentAsset.mime },
+        {
+          resolveProvider: () => providerStatus,
+          loadGarmentBytes: async (storageKey) => {
+            const buf = await getObject(storageKey);
+            return buf ? new Uint8Array(buf) : null;
+          },
+          renderBaseline: async () => {
+            // the C2 seam: a stylized avatar render derived from the consented
+            // HTIR (body-aware — morphology/appearance descriptors feed the
+            // prompt; the anti-impersonation policy is enforced inside)
+            const r = await renderPortraitImage(htir, style, routed !== undefined ? { provider: routed } : {});
+            await recordUsage(ctx.tenantId, 'provider.image.calls', 1, {
+              jobKind: 'tryon.render',
+              tryOnJobId: job.id,
+              phase: 'baseline',
+              latencyMs: r.latencyMs,
+            });
+            return {
+              storageKey: r.storageKey,
+              contentHash: r.contentHash,
+              bytes: r.bytes,
+              mime: r.mime,
+              latencyMs: r.latencyMs,
+              provider: typeof r.meta.provider === 'string' ? r.meta.provider : 'unknown',
+              providerModel: typeof r.meta.providerModel === 'string' ? r.meta.providerModel : null,
+            };
+          },
+          storeTryOnImage: async (bytes, mime) => putObject(Buffer.from(bytes), { kind: 'tryon', mime }),
+          callProvider: async (baseline, garment) => {
+            const personBuf = await getObject(baseline.storageKey);
+            if (!personBuf) {
+              throw new TryOnRefusal('validation_failed', `baseline image "${baseline.storageKey}" not found in object storage`);
+            }
+            return executeVertexTryOnCall(
+              providerStatus,
+              { personImage: new Uint8Array(personBuf), garmentImage: garment.bytes },
+              {
+                personMime: baseline.mime,
+                garmentMime: garment.mime,
+                apiKey: process.env.YOU_TRYON_VERTEX_KEY ?? '',
+                fetchImpl: fetch as unknown as TryOnFetch,
+                timeoutMs: tryOnTimeoutMs(),
+              },
+            );
+          },
+          compareImages: async (a, b) => {
+            try {
+              const [aBuf, bBuf] = await Promise.all([getObject(a.storageKey), getObject(b.storageKey)]);
+              if (!aBuf || !bBuf) {
+                visionState.reason = 'one of the identity-comparison images is missing from object storage';
+                return null;
+              }
+              const vision = await reconVisionCompare(
+                toDataUrl(aBuf, mimeFromKey(a.storageKey)),
+                toDataUrl(bBuf, mimeFromKey(b.storageKey)),
+                TRYON_IDENTITY_PROMPT,
+              );
+              const parsed = parseVisionComparison(vision.content);
+              if (!parsed) {
+                visionState.reason =
+                  'the vision comparison response did not parse into a score — refusing to guess an identity preservation value';
+                return null;
+              }
+              return parsed;
+            } catch (err) {
+              visionState.reason = err instanceof Error ? err.message : String(err);
+              return null;
+            }
+          },
+          garmentProductRef: job.garmentAsset.productRef,
+          // the artifact records the garment's product reference VERBATIM (the
+          // preservation invariant assertTryOnSuccess enforces)
+          artifactProductRef: job.garmentAsset.productRef,
+          get visionUnavailableReason() {
+            return visionState.reason;
+          },
+        },
+        onProgress,
+      );
+    } catch (err) {
+      // honest terminal state on the TryOnJob row: verbatim error, finished
+      const message = err instanceof Error ? err.message : String(err);
+      steps.failed('tryon', message.slice(0, 300));
+      await ctx.report({ steps: steps.all(), status: 'failed' }).catch(() => undefined);
+      await db.tryOnJob
+        .update({ where: { id: job.id }, data: { status: 'failed', error: message, finishedAt: new Date() } })
+        .catch(() => undefined);
+      throw err;
+    }
+
+    steps.done('baseline', `baseline stored (${result.baseline.bytes} bytes)`);
+    steps.done('tryon', `${result.latencyMs}ms real provider latency (${result.provider})`);
+    steps.done(
+      'comparison',
+      `garment ${result.identityReport.garmentIdentity.status}, twin ${result.identityReport.twinIdentity.status}, productRef ${
+        result.identityReport.productRefPreserved ? 'preserved' : 'NOT preserved'
+      }`,
+    );
+    await ctx.report({ steps: steps.all(), progress: 0.88 });
+
+    await ctx.report({ steps: steps.running('persist'), progress: 0.9 });
+    const artifact = await db.outputArtifact.create({
+      data: {
+        tenantId: job.tenantId,
+        kind: 'tryon-comparison',
+        storageKey: result.storageKey,
+        contentHash: result.contentHash,
+        bytes: result.bytes,
+        mime: result.mime,
+        meta: JSON.stringify({
+          adapterId: TRYON_ADAPTER.adapterId,
+          adapterVersion: TRYON_ADAPTER.version,
+          // THE contract field — rendered prominently by every view, echoed in
+          // the merchant callback, verified by assertTryOnSuccess
+          visualOnlyDisclaimer: result.visualOnlyDisclaimer,
+          identityReport: result.identityReport,
+          diffManifest: result.diffManifest,
+          provider: {
+            id: result.provider,
+            model: result.providerModel,
+            taskId: result.providerTaskId,
+            latencyMs: result.latencyMs,
+            realLatency: true,
+          },
+          comparison: {
+            baseline: result.baseline,
+            tryOn: { storageKey: result.storageKey, contentHash: result.contentHash, bytes: result.bytes, mime: result.mime },
+            garment: {
+              assetId: job.garmentAsset.id,
+              displayName: job.garmentAsset.displayName,
+              productRef: job.garmentAsset.productRef,
+              productUrl: job.garmentAsset.productUrl,
+              storageKey: job.garmentAsset.storageKey,
+              contentHash: job.garmentAsset.contentHash,
+            },
+          },
+          provenance: {
+            twinId: job.twinId,
+            twinVersionId: job.twinVersionId,
+            garmentAssetId: job.garmentAssetId,
+            consentGrantIds: grants.map((g) => g.id),
+            subjectId: job.twin.subjectId,
+            style,
+            costUsd: null,
+            costBasis: 'provider pricing not exposed to this sandbox — costUsd stays null (never recorded as observed)',
+          },
+        }),
+      },
+    });
+    await db.tryOnJob.update({
+      where: { id: job.id },
+      data: { status: 'succeeded', artifactId: artifact.id, finishedAt: new Date() },
+    });
+    steps.done('persist', `artifact ${artifact.id} (kind tryon-comparison)`);
+    await ctx.report({ steps: steps.all(), progress: 1 });
+
+    // the merchant callback shape: everything an e-commerce integration needs
+    // (product reference preserved verbatim + artifact refs + the disclaimer)
+    // — delivered through the existing signed webhook fan-out (F-04 law)
+    await emitEvent(ctx.tenantId, 'tryon.completed', 'tryOnJob', job.id, {
+      tryOnJobId: job.id,
+      jobId: ctx.jobId,
+      artifactId: artifact.id,
+      garmentAssetId: job.garmentAsset.id,
+      productRef: job.garmentAsset.productRef,
+      twinId: job.twinId,
+      twinVersionId: job.twinVersionId,
+      identityChecksPassed: result.identityReport.checksPassed,
+      visualOnlyDisclaimer: VISUAL_ONLY_DISCLAIMER,
+    });
+    await recordUsage(ctx.tenantId, 'job.tryon.render', 1, {
+      tryOnJobId: job.id,
+      artifactId: artifact.id,
+      providerLatencyMs: result.latencyMs,
+    });
+
+    return {
+      output: {
+        tryOnJobId: job.id,
+        artifactId: artifact.id,
+        identityReport: result.identityReport,
+        diffManifest: result.diffManifest,
+        visualOnlyDisclaimer: result.visualOnlyDisclaimer,
+        provider: result.provider,
+        providerLatencyMs: result.latencyMs,
+      },
+      entities: [
+        { type: 'tryOnJob', id: job.id },
+        { type: 'outputArtifact', id: artifact.id },
+        { type: 'garmentAsset', id: job.garmentAsset.id },
+      ],
+    };
+  },
+});

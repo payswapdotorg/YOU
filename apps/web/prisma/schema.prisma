@@ -43,6 +43,8 @@ model Tenant {
   runtimeSouls   AgentRuntimeSoul[]
   runtimeSessions AgentRuntimeSession[]
   liveSessions   LiveSession[]
+  garmentAssets  GarmentAsset[]
+  tryOnJobs      TryOnJob[]
 }
 
 model User {
@@ -227,6 +229,7 @@ model Twin {
   runtimeSouls    AgentRuntimeSoul[]
   runtimeSessions AgentRuntimeSession[]
   liveSessions    LiveSession[]
+  tryOnJobs       TryOnJob[]
 }
 
 model TwinVersion {
@@ -248,6 +251,7 @@ model TwinVersion {
   feedbacks        FeedbackRequest[]
   evidenceRequests EvidenceRequest[]
   runtimeBodies   AgentRuntimeBody[]
+  tryOnJobs       TryOnJob[]
 
   @@unique([twinId, version])
 }
@@ -790,6 +794,56 @@ model LiveSession {
   tenant       Tenant                @relation(fields: [tenantId], references: [id])
   twin         Twin?                 @relation(fields: [twinId], references: [id])
   agentSession AgentRuntimeSession?  @relation(fields: [agentSessionId], references: [id])
+}
+
+// ─── Plane: E-commerce try-on (P6.C8) ───────────────────────────────────────
+
+// Garment/product asset — the merchant-side input to virtual try-on. The
+// image bytes live in the content-addressed object store (storageKey +
+// contentHash); productRef/productUrl are the MERCHANT INTEGRATION surface
+// (the product reference preserved verbatim through every try-on artifact
+// and 'tryon.completed' webhook callback).
+model GarmentAsset {
+  id          String   @id @default(cuid())
+  tenantId    String
+  displayName String
+  productRef  String? // merchant product reference (external id; preserved through artifacts)
+  productUrl  String? // merchant product page URL (optional provenance)
+  storageKey  String // content-addressed garment image (immutable bytes)
+  contentHash String // sha256
+  bytes       Int
+  mime        String // image/png | image/jpeg | image/webp (upload validation law)
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant      @relation(fields: [tenantId], references: [id])
+  tryOnJobs TryOnJob[]
+
+  @@index([storageKey])
+}
+
+// One virtual try-on — a durable `tryon.render` job row (the RenderJob
+// pattern, try-on side). The comparison artifact (side-by-side + diff
+// manifest + identity-preservation report + the visual-only disclaimer)
+// lands as an OutputArtifact (kind 'tryon-comparison') referenced below.
+model TryOnJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  twinId         String
+  twinVersionId  String
+  garmentAssetId String
+  style          String    @default("photorealistic") // photorealistic | stylized-portrait | anime | illustration
+  status         String    @default("queued") // queued | running | succeeded | failed
+  jobId          String? // the durable `tryon.render` Job id (steps/progress polling)
+  artifactId     String? // the comparison OutputArtifact when complete
+  error          String? // verbatim failure (fail-closed provider refusals included)
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  twin         Twin         @relation(fields: [twinId], references: [id])
+  twinVersion  TwinVersion  @relation(fields: [twinVersionId], references: [id])
+  garmentAsset GarmentAsset @relation(fields: [garmentAssetId], references: [id])
 }
 
 // ─── Usage metering ─────────────────────────────────────────────────────────

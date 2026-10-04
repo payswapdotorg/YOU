@@ -5,7 +5,7 @@ import type { SessionInfo } from '@/lib/you/contracts';
 
 export const VIEW_IDS = [
   'overview', 'twins', 'captures', 'evidence-requests', 'performances', 'templates', 'renders',
-  'live', 'agent-avatars', 'develop', 'labs', 'trust', 'usage', 'settings',
+  'try-on', 'live', 'agent-avatars', 'develop', 'labs', 'trust', 'usage', 'settings',
   'artifact',
 ] as const;
 export type ViewId = (typeof VIEW_IDS)[number];

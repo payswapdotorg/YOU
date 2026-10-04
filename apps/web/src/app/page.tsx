@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
 import {
-  LayoutGrid, UserRound, Camera, Drama, LayoutTemplate, ImageIcon, Radio,
+  LayoutGrid, UserRound, Camera, Drama, LayoutTemplate, ImageIcon, Radio, Shirt,
   Bot, KeyRound, FlaskConical, ShieldCheck, CreditCard, Settings, Search,
   Menu, Moon, Sun, Plus, ChevronRight, Activity, Target,
 } from 'lucide-react';
@@ -28,6 +28,7 @@ import { EvidenceRequestsView } from '@/components/you/views/evidence-requests';
 import { PerformancesView } from '@/components/you/views/performances';
 import { TemplatesView } from '@/components/you/views/templates';
 import { RendersView } from '@/components/you/views/renders';
+import { TryOnView } from '@/components/you/views/try-on';
 import { LiveView } from '@/components/you/views/live';
 import { AgentAvatarsView } from '@/components/you/views/agent-avatars';
 import { DevelopView } from '@/components/you/views/develop';
@@ -48,6 +49,7 @@ const NAV: { section?: string; items: { id: ViewId; label: string; icon: typeof 
       { id: 'performances', label: 'Performances', icon: Drama },
       { id: 'templates', label: 'Templates', icon: LayoutTemplate },
       { id: 'renders', label: 'Renders', icon: ImageIcon },
+      { id: 'try-on', label: 'Try-on', icon: Shirt },
       { id: 'live', label: 'Live', icon: Radio },
     ],
   },
@@ -72,7 +74,7 @@ const NAV: { section?: string; items: { id: ViewId; label: string; icon: typeof 
 const VIEW_TITLES: Record<ViewId, string> = {
   overview: 'Overview', twins: 'Twins', captures: 'Captures', 'evidence-requests': 'Evidence Requests',
   performances: 'Performances',
-  templates: 'Templates', renders: 'Renders', live: 'Live', 'agent-avatars': 'Agent Avatars',
+  templates: 'Templates', renders: 'Renders', 'try-on': 'Virtual Try-on', live: 'Live', 'agent-avatars': 'Agent Avatars',
   develop: 'API & Tools', labs: 'Labs', trust: 'Consent & Provenance', usage: 'Usage & Billing',
   settings: 'Settings', artifact: 'Solution Artifact',
 };
@@ -80,7 +82,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
 const VIEWS: Record<ViewId, React.ComponentType> = {
   overview: OverviewView, twins: TwinsView, captures: CapturesView,
   'evidence-requests': EvidenceRequestsView, performances: PerformancesView, templates: TemplatesView, renders: RendersView,
-  live: LiveView, 'agent-avatars': AgentAvatarsView, develop: DevelopView,
+  'try-on': TryOnView, live: LiveView, 'agent-avatars': AgentAvatarsView, develop: DevelopView,
   labs: LabsView, trust: TrustView, usage: UsageView, settings: SettingsView,
   artifact: ArtifactView,
 };
