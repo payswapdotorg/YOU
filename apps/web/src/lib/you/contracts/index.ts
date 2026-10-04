@@ -688,7 +688,7 @@ export interface PromotionRecordView {
 export interface SolutionArtifactManifest {
   solutionId: string;
   version: number;
-  type: 'twin-review' | 'render-review' | 'benchmark-report' | 'avatar-session';
+  type: 'twin-review' | 'render-review' | 'benchmark-report' | 'avatar-session' | 'performance-review';
   title: string;
   inputs: { label: string; kind: string; ref: string }[];
   twinVersion?: { id: string; version: number } | null;
@@ -697,7 +697,10 @@ export interface SolutionArtifactManifest {
   organization?: { id: string; label: string } | null;
   artifacts: { artifactId: string; label: string; kind: string; url: string }[];
   evidence: { assetId: string; label: string; contentHash: string; url: string }[];
-  consent: { grantIds: string[]; scopes: ConsentScope[]; subjectId: string };
+  // P6.B6: null when no consent applies (e.g. a text-origin performance
+  // records no subject evidence) — the consent SECTION slot carries the
+  // documented reason; legacy manifests always carry the object.
+  consent: { grantIds: string[]; scopes: ConsentScope[]; subjectId: string } | null;
   provenance: Record<string, unknown>;
   feedback_schema: {
     verdicts: string[];
@@ -707,6 +710,11 @@ export interface SolutionArtifactManifest {
     capabilities: string[];
   };
   export_targets: string[];
+  // P6.B6 (manifest v2): every P5 section gets a FIRST-CLASS slot — filled
+  // with real references, or explicitly null WITH a documented reason
+  // (honesty law: no invented content). Absent on legacy v1 manifests;
+  // readers treat absence as legacy and derive as before.
+  sections?: ArtifactManifestSections;
 }
 
 export interface SolutionArtifactView {
@@ -715,6 +723,111 @@ export interface SolutionArtifactView {
   type: SolutionArtifactManifest['type'];
   manifest: SolutionArtifactManifest;
   createdAt: string;
+}
+
+// ─── P6.B6 — first-class manifest sections (manifest v2) ─────────────────────
+
+/** Uniform slot envelope: `data` non-null → filled with real references;
+ *  `data: null` → honestly absent, `reason` documents WHY (required,
+ *  non-empty) and `fillHint` says what would fill it. */
+export interface ArtifactSectionSlot<T> {
+  data: T | null;
+  reason?: string;
+  fillHint?: string;
+}
+
+/** The 10 P5 sections, in canonical surface order. */
+export type ArtifactSectionKey =
+  | 'result' | 'compare' | 'evidence' | 'improve' | 'performance'
+  | 'provenance' | 'consent' | 'apiCode' | 'feedback' | 'evidenceRequests';
+
+export interface ManifestSectionRef {
+  label: string;
+  kind: string;
+  ref: string;
+}
+
+export interface ManifestResultSection {
+  /** honest one-liner; numbers quoted verbatim from the job output */
+  summary: string;
+  refs: ManifestSectionRef[];
+  metrics?: Record<string, string | number | boolean>;
+}
+
+export interface ManifestCompareSection {
+  /** the baseline this artifact's TwinVersion can be compared against */
+  baselineTwinVersion: { id: string; version: number } | null;
+  note: string;
+}
+
+export interface ManifestEvidenceSection {
+  /** ids into the top-level manifest.evidence[] entries */
+  assetIds: string[];
+}
+
+/** The improve chain — REAL causal links only: a targeted evidence request,
+ *  its fulfillment capture session, and versions whose evidenceAssetIds
+ *  overlap that session's assets (never inferred from timestamps alone). */
+export interface ManifestImproveSection {
+  requests: {
+    requestId: string;
+    capability: string;
+    status: string;
+    captureSessionId: string | null;
+  }[];
+  followUpVersions: {
+    twinVersionId: string;
+    version: number;
+    artifactId: string | null;
+    causedBySessionIds: string[];
+  }[];
+  note: string;
+}
+
+export interface ManifestPerformanceSection {
+  id: string;
+  name: string;
+}
+
+export interface ManifestProvenanceSection {
+  adapterComponents: { adapterId: string; version: string }[];
+  provenanceKeys: string[];
+}
+
+export interface ManifestConsentSection {
+  subjectId: string;
+  grantIds: string[];
+  scopes: string[];
+}
+
+export interface ManifestApiCodeSection {
+  /** real API paths this artifact's review loop travels */
+  endpoints: string[];
+}
+
+export interface ManifestFeedbackSection {
+  /** live FeedbackRequests linked to THIS artifact (read-time merge) */
+  requests: FeedbackRequestView[];
+  note: string;
+}
+
+export interface ManifestEvidenceRequestsSection {
+  /** live targeted EvidenceRequests for this artifact's TwinVersion */
+  requests: EvidenceRequestView[];
+  capabilities: string[];
+}
+
+export interface ArtifactManifestSections {
+  result: ArtifactSectionSlot<ManifestResultSection>;
+  compare: ArtifactSectionSlot<ManifestCompareSection>;
+  evidence: ArtifactSectionSlot<ManifestEvidenceSection>;
+  improve: ArtifactSectionSlot<ManifestImproveSection>;
+  performance: ArtifactSectionSlot<ManifestPerformanceSection>;
+  provenance: ArtifactSectionSlot<ManifestProvenanceSection>;
+  consent: ArtifactSectionSlot<ManifestConsentSection>;
+  apiCode: ArtifactSectionSlot<ManifestApiCodeSection>;
+  feedback: ArtifactSectionSlot<ManifestFeedbackSection>;
+  evidenceRequests: ArtifactSectionSlot<ManifestEvidenceRequestsSection>;
 }
 
 export type FeedbackVerdict =

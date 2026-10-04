@@ -99,6 +99,17 @@ export function TwinDetail({
     [twin?.versions],
   );
 
+  // P6.B6 — artifacts of the SELECTED version, from the server (the honest
+  // source: versions compiled in earlier sessions have artifacts too, not
+  // just the ones this browser watched a job produce). Placed with the other
+  // queries — before the early returns, hooks stay unconditional.
+  const effectiveVersionId = selectedVersionId ?? versions[0]?.id ?? null;
+  const versionArtifactsQ = useQuery({
+    queryKey: ['version-artifacts', effectiveVersionId],
+    queryFn: () => api.artifacts.list({ twinVersionId: effectiveVersionId as string }),
+    enabled: !!effectiveVersionId,
+  });
+
   // ── Reconstruct (twin.compile) ────────────────────────────────────────────
   const [compileJobId, setCompileJobId] = useState<string | null>(null);
   const [compileOpen, setCompileOpen] = useState(false);
@@ -131,6 +142,8 @@ export function TwinDetail({
       if (versionId) sessionArtifactsByVersion.set(versionId, artifactId);
       sessionArtifactsByTwin.set(twinId, artifactId);
     }
+    // P6.B6: refresh the server-truth artifact list for the new version.
+    void qc.invalidateQueries({ queryKey: ['version-artifacts'] });
     toast.success('Reconstruction complete', {
       description: versionId
         ? 'A new immutable TwinVersion was created from the evidence set.'
@@ -260,6 +273,7 @@ export function TwinDetail({
   const artifactId = selectedVersion
     ? sessionArtifactsByVersion.get(selectedVersion.id)
       ?? (selectedVersion.id === latestVersion?.id ? sessionArtifactsByTwin.get(twinId) : undefined)
+      ?? versionArtifactsQ.data?.[0]?.id // P6.B6: server truth for older versions
     : undefined;
 
   const compileRunning = compileJobId && compileJob && !JOB_TERMINAL.includes(compileJob.status);
