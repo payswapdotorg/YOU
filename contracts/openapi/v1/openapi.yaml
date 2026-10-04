@@ -102,6 +102,10 @@ paths:
     post:
       summary: API keys — rotate secret in place
       responses: {"201": {"description": "Created"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /artifacts:
+    get:
+      summary: Solution artifacts list — filter by twinVersionId/renderJobId/type/performanceId (P6.B6)
+      responses: {"200": {"description": "OK"}}
   /artifacts/{id}:
     get:
       summary: Solution artifacts item
