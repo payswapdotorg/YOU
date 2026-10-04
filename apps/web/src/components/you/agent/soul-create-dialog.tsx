@@ -3,11 +3,20 @@
 // personality/behavior configuration BOUND TO A TWIN, with an honest
 // capability manifest, behavior params and a deterministic seed. Created as
 // DRAFT; activate from the list.
+//
+// P6.B7 — provider wiring: the provider is chosen from the C5 AI model
+// registry surface (GET /api/v1/agent/providers — env-credential health,
+// fail-closed) and validated server-side on create (wave-1 chat-adapter
+// allow-list). Providers without a chat adapter are shown WITH their honest
+// reason and are not selectable — the UI mirrors the server truth instead of
+// letting a doomed submit happen. Credentials are NEVER entered here: the
+// registry reads env keys server-side only.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ghost, Loader2, Plus } from 'lucide-react';
+import { Ghost, Loader2, Plus, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
+import type { SoulProviderStatusRow } from '@/lib/you/agent/soul-providers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -31,7 +40,18 @@ function parseList(v: string): string[] {
   return v.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-export function SoulCreateDialog() {
+export function SoulCreateDialog({
+  providers,
+  providersPending,
+  providersError,
+  onRetryProviders,
+}: {
+  /** resolved C5 registry provider rows (the view owns the query). */
+  providers: SoulProviderStatusRow[];
+  providersPending: boolean;
+  providersError: boolean;
+  onRetryProviders: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -39,13 +59,21 @@ export function SoulCreateDialog() {
   const [tagline, setTagline] = useState('');
   const [traits, setTraits] = useState('');
   const [speakingStyle, setSpeakingStyle] = useState('');
+  const [providerId, setProviderId] = useState('zai');
   const [model, setModel] = useState('glm-fast');
   const [thinking, setThinking] = useState(false);
   const [temperature, setTemperature] = useState('');
   const [capabilities, setCapabilities] = useState<string[]>(['conversation']);
   const qc = useQueryClient();
 
-  const twins = useQuery({ queryKey: ['twins'], queryFn: () => api.twins.list() });
+  const twins = useQuery({
+    queryKey: ['twins'],
+    queryFn: () => api.twins.list(),
+    // only fetch when the dialog is actually open (registry context loads on demand)
+    enabled: open,
+  });
+
+  const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
 
   const create = useMutation({
     mutationFn: () =>
@@ -59,6 +87,7 @@ export function SoulCreateDialog() {
             ...(parseList(traits).length ? { traits: parseList(traits) } : {}),
             ...(speakingStyle.trim() ? { speakingStyle: speakingStyle.trim() } : {}),
           },
+          provider: providerId,
           model,
           params: {
             thinking,
@@ -75,7 +104,7 @@ export function SoulCreateDialog() {
       qc.invalidateQueries({ queryKey: ['agent-runtime-souls'] });
       setOpen(false);
       setName(''); setDescription(''); setTwinId(''); setTagline(''); setTraits(''); setSpeakingStyle('');
-      setModel('glm-fast'); setThinking(false); setTemperature(''); setCapabilities(['conversation']);
+      setProviderId('zai'); setModel('glm-fast'); setThinking(false); setTemperature(''); setCapabilities(['conversation']);
     },
     onError: (err) => {
       const msg = err instanceof YouApiError ? err.message : 'request failed';
@@ -83,7 +112,12 @@ export function SoulCreateDialog() {
     },
   });
 
-  const canSubmit = name.trim().length > 0 && !!twinId && !create.isPending;
+  // fail-closed provider wiring: without the registry status the provider
+  // cannot be honestly configured — Create stays disabled with the reason
+  const providersKnown = !providersPending && !providersError;
+  const providerSelectable = providers.some((p) => p.available);
+  const canSubmit = providersKnown && providerSelectable
+    && name.trim().length > 0 && !!twinId && !create.isPending;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -112,7 +146,7 @@ export function SoulCreateDialog() {
             <div className="space-y-1.5">
               <Label className="text-xs">Twin <span className="font-normal text-muted-foreground">(required)</span></Label>
               <Select value={twinId || undefined} onValueChange={setTwinId}>
-                <SelectTrigger className="h-9"><SelectValue placeholder={twins.data?.length ? 'Select twin' : 'No twins yet'} /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Twin"><SelectValue placeholder={twins.isPending ? 'Loading twins…' : (twins.data?.length ? 'Select twin' : 'No twins yet')} /></SelectTrigger>
                 <SelectContent>
                   {twins.data?.map((t) => (
                     <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
@@ -135,16 +169,71 @@ export function SoulCreateDialog() {
             <Textarea value={speakingStyle} onChange={(e) => setSpeakingStyle(e.target.value)}
               placeholder="Speaking style — how this Soul talks…" className="min-h-14 text-sm" aria-label="Persona speaking style" />
           </div>
+
+          {/* ── P6.B7 provider wiring (C5 registry, fail-closed) ── */}
+          <div className="space-y-1.5 rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
+            <Label className="text-xs">Provider <span className="font-normal text-muted-foreground">(C5 model registry — fail-closed)</span></Label>
+            <Select value={providerId} onValueChange={setProviderId} disabled={!providersKnown}>
+              <SelectTrigger className="h-9" aria-label="Soul provider (C5 model registry)">
+                <SelectValue placeholder={providersPending ? 'Loading providers…' : 'Select provider'} />
+              </SelectTrigger>
+              <SelectContent>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id} disabled={!p.available} title={p.reason}>
+                    {p.id} — {p.available ? 'available' : 'unavailable'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {providersPending ? (
+              <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" aria-hidden /> Resolving provider health from the registry…
+              </p>
+            ) : providersError ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-red-700 dark:text-red-400">
+                <span>Provider status unavailable — provider wiring is fail-closed until the registry resolves.</span>
+                <Button size="sm" variant="outline" className="h-7" onClick={onRetryProviders}>Retry</Button>
+              </div>
+            ) : selectedProvider ? (
+              <>
+                <p className={`text-[11px] leading-snug ${selectedProvider.available ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`}>
+                  {selectedProvider.reason}
+                </p>
+                {selectedProvider.models.length ? (
+                  <p className="text-[10px] leading-snug text-muted-foreground">
+                    <span className="font-medium">C5 registry models (reference, not chat-capable yet):</span>{' '}
+                    {selectedProvider.models.map((m) => `${m.modelId} (${[
+                      m.capabilities.vision ? 'vision' : null,
+                      m.capabilities.imageGen ? 'image-gen' : null,
+                      m.capabilities.videoGen ? 'video-gen' : null,
+                    ].filter(Boolean).join('/') || 'no capability'})${m.enabled ? '' : ' [disabled] '}`).join(', ')}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">Select a provider to see its registry health.</p>
+            )}
+            <p className="flex items-start gap-1.5 border-t pt-2 text-[10px] leading-snug text-muted-foreground">
+              <ShieldAlert className="mt-0.5 size-3 shrink-0" aria-hidden />
+              Credentials are never entered here — the registry reads env keys server-side only (placeholders in
+              apps/web/.env.example); a missing key is honestly reported, never guessed.
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Model <span className="font-normal text-muted-foreground">(declared provenance)</span></Label>
               <Select value={model} onValueChange={(v) => { setModel(v); setThinking(v === 'glm-thinking'); }}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Model"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="glm-fast">glm-fast · zai seam</SelectItem>
-                  <SelectItem value="glm-thinking">glm-thinking · zai seam</SelectItem>
+                  <SelectItem value="glm-fast">glm-fast · chat seam</SelectItem>
+                  <SelectItem value="glm-thinking">glm-thinking · chat seam</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-[10px] leading-snug text-muted-foreground">
+                Wave-1: chat routes through the in-sandbox seam; the C5 registry registers no chat-capable
+                model yet, so the model is declared provenance the seam records per turn.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="soul-temp" className="text-xs">Temperature <span className="font-normal text-muted-foreground">(optional, 0–2)</span></Label>

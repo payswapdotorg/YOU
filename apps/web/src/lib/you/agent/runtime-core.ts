@@ -466,6 +466,37 @@ export interface AgentSoulBehaviorParams {
 export const SOUL_PROVIDER_IDS = ['zai'] as const;
 export type SoulProviderId = (typeof SOUL_PROVIDER_IDS)[number];
 
+/** P6.B7: the decision outcome for configuring a Soul's provider. */
+export type SoulProviderBindingDecision =
+  | { ok: true; provider: string }
+  | { ok: false; refusal: AgentRuntimeRefusal };
+
+/**
+ * P6.B7 (pure, provider-neutral): validate a Soul's provider binding against
+ * the wave-1 chat-adapter allow-list (SOUL_PROVIDER_IDS — the C5 model
+ * registry registers no chat capability yet, so chat execution routes through
+ * the wave-1 seam; the allow-list IS the truth about who can execute chat).
+ * The message is the C6 contract message (moved verbatim from runtime.ts so
+ * the decision is unit-testable; runtime.ts just maps the refusal to HTTP).
+ */
+export function decideSoulProviderBinding(
+  provider: string,
+  chatProviderIds: readonly string[] = SOUL_PROVIDER_IDS,
+): SoulProviderBindingDecision {
+  const normalized = provider.trim().toLowerCase();
+  if (!chatProviderIds.includes(normalized)) {
+    return {
+      ok: false,
+      refusal: new AgentRuntimeRefusal(
+        400,
+        'validation_failed',
+        `provider "${normalized}" has no chat adapter in wave-1 (available: ${chatProviderIds.join(', ')}) — the C5 model registry has no chat capability yet; chat execution routes through the zai seam`,
+      ),
+    };
+  }
+  return { ok: true, provider: normalized };
+}
+
 /** Validated persona (bounded fields; traits deduped + capped at 12). */
 export function normalizePersona(input: unknown): AgentSoulPersona {
   const src = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
@@ -598,6 +629,16 @@ export interface TurnEngineChatResult {
   model: string;
 }
 
+/**
+ * P6.B7 turn transparency: the engine reports each observable phase boundary
+ * of the turn lifecycle so the durable executor can surface live progress
+ * (the job's running-step detail) — "waiting on model" vs "tool round N".
+ * Optional + backward-compatible: the C6 unit tests inject deps without it.
+ */
+export type AgentTurnPhase =
+  | { phase: 'model'; call: 'draft' | 'follow-up'; round: number }
+  | { phase: 'tool'; tool: string; round: number; executed: boolean };
+
 export interface TurnEngineDeps {
   chat: (
     messages: AgentChatMessage[],
@@ -620,6 +661,8 @@ export interface TurnEngineDeps {
    * the turn (best-effort law).
    */
   onEvent?: (event: AgentPerformanceEvent) => void | Promise<void>;
+  /** P6.B7: optional live phase reporter (turn transparency; never throws). */
+  onPhase?: (phase: AgentTurnPhase) => void;
 }
 
 export interface TurnEngineInput {
@@ -720,6 +763,17 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
   let totalLatencyMs = 0;
   let lastModel = 'unknown';
 
+  // P6.B7: phase reporting is best-effort — a throwing reporter must never
+  // break the turn itself
+  const onPhase = (phase: AgentTurnPhase): void => {
+    try {
+      deps.onPhase?.(phase);
+    } catch {
+      /* honest best-effort: transparency never endangers execution */
+    }
+  };
+
+  onPhase({ phase: 'model', call: 'draft', round: 0 });
   const completion = await deps.chat(messages, { thinking, temperature });
   llmCalls += 1;
   totalLatencyMs += completion.latencyMs;
@@ -767,6 +821,8 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
         };
     toolExecutions.push(execution);
 
+    onPhase({ phase: 'tool', tool: execution.tool, round, executed: execution.executed });
+
     const resultJson = cappedJson(execution.result, 2400);
     await emit({
       eventId: deps.uuid(),
@@ -811,6 +867,7 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
         : `TOOL RESULT: the tool was NOT executed (${execution.reason}). Do not pretend it ran. ${followUpInstruction}`,
     });
     const followUpStartedAt = deps.now();
+    onPhase({ phase: 'model', call: 'follow-up', round });
     const followUp = await deps.chat(messages, { thinking, temperature });
     llmCalls += 1;
     totalLatencyMs += followUp.latencyMs;
@@ -932,6 +989,12 @@ export interface AgentRuntimeTurnView {
   jobStatus: string | null;
   /** verbatim job error when the turn job failed/dead — null otherwise. */
   jobError: string | null;
+  /** P6.B7 turn transparency: real job progress (0..1) while in flight — null when no job. */
+  jobProgress: number | null;
+  /** P6.B7: the job's CURRENT running step (key/label/status/detail) while in flight. */
+  jobStep: { key: string; label: string; status: string; detail?: string } | null;
+  /** P6.B7: when the job reached its terminal state — null when no job/running. */
+  jobFinishedAt: string | null;
   createdAt: string;
 }
 

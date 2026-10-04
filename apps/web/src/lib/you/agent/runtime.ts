@@ -58,13 +58,13 @@ import {
   compileAgentSystemPrompt,
   decideLifecycleTransition,
   decideSessionBinding,
+  decideSoulProviderBinding,
   deriveSessionSeed,
   normalizeBehaviorParams,
   normalizeManifest,
   normalizePersona,
   parseEntityStatus,
   parseManifest,
-  SOUL_PROVIDER_IDS,
   type AgentCapabilityManifest,
   type AgentEntityStatus,
   type AgentRuntimeBodyView,
@@ -163,9 +163,13 @@ export function runtimeSoulView(
 
 export function runtimeTurnView(
   t: AgentRuntimeTurn,
-  jobStatus: string | null = null,
-  jobError: string | null = null,
+  job?: Job | null,
 ): AgentRuntimeTurnView {
+  // P6.B7 turn transparency: the join now carries the REAL job progress, the
+  // current running step (with the executor's phase detail) and the terminal
+  // timestamp — the embodiment surface derives live states from these.
+  const steps = job ? parseJson<Array<{ key: string; label: string; status: string; detail?: string }>>(job.steps, []) : [];
+  const runningStep = Array.isArray(steps) ? steps.find((s) => s?.status === 'running') ?? null : null;
   return {
     id: t.id,
     role: t.role === 'agent' ? 'agent' : 'user',
@@ -175,8 +179,18 @@ export function runtimeTurnView(
     seed: t.seed,
     model: t.model,
     jobId: t.jobId,
-    jobStatus,
-    jobError,
+    jobStatus: job?.status ?? null,
+    jobError: job && (job.status === 'failed' || job.status === 'dead') ? (job.error ?? null) : null,
+    jobProgress: job && (job.status === 'queued' || job.status === 'running') ? job.progress : null,
+    jobStep: runningStep
+      ? {
+          key: runningStep.key,
+          label: runningStep.label,
+          status: runningStep.status,
+          ...(runningStep.detail !== undefined ? { detail: runningStep.detail } : {}),
+        }
+      : null,
+    jobFinishedAt: job?.finishedAt ? job.finishedAt.toISOString() : null,
     createdAt: t.createdAt.toISOString(),
   };
 }
@@ -199,14 +213,7 @@ export function runtimeSessionView(
     consentGrantId: s.consentGrantId,
     seed: s.seed,
     status: s.status === 'ended' ? 'ended' : 'live',
-    turns: turns.map((t) => {
-      const job = t.jobId ? jobsById.get(t.jobId) : undefined;
-      return runtimeTurnView(
-        t,
-        job?.status ?? null,
-        job?.status === 'failed' || job?.status === 'dead' ? (job.error ?? null) : null,
-      );
-    }),
+    turns: turns.map((t) => runtimeTurnView(t, t.jobId ? jobsById.get(t.jobId) : undefined)),
     createdAt: s.createdAt.toISOString(),
     endedAt: s.endedAt ? s.endedAt.toISOString() : null,
   };
@@ -500,12 +507,11 @@ export async function createRuntimeSoul(tenantId: string, input: CreateRuntimeSo
   const manifest = normalizeManifest(input.capabilities);
   const persona = normalizePersona(input.persona);
   const params = normalizeBehaviorParams(input.params); // typed 400 on bad temperature
-  const provider = (input.provider ?? 'zai').trim().toLowerCase();
-  if (!(SOUL_PROVIDER_IDS as readonly string[]).includes(provider)) {
-    throw badRequest(
-      `provider "${provider}" has no chat adapter in wave-1 (available: ${SOUL_PROVIDER_IDS.join(', ')}) — the C5 model registry has no chat capability yet; chat execution routes through the zai seam`,
-    );
-  }
+  // P6.B7: the provider decision is the pure, unit-tested rule (wave-1 chat
+  // adapter allow-list — the C5 registry has no chat capability yet)
+  const decision = decideSoulProviderBinding(input.provider ?? 'zai');
+  if (!decision.ok) throw toHttpError(decision.refusal);
+  const provider = decision.provider;
   const twin = await db.twin.findFirst({ where: { id: input.twinId, tenantId } });
   if (!twin) throw notFound(`twin "${input.twinId}" not found`);
 
@@ -710,6 +716,96 @@ export async function endRuntimeSession(tenantId: string, sessionId: string): Pr
   });
 }
 
+// ─── Turn interrupt (P6.B7 — honest, cancelCompute-precedent semantics) ────
+
+export interface InterruptRuntimeTurnResult {
+  jobId: string;
+  /**
+   * true — the job was QUEUED and is now effectively cancelled (the core
+   * runner refuses non-queued jobs, so the runtime never picks the turn up:
+   * no reply was or will be produced for that user turn).
+   * false — the job was RUNNING: a durable interrupt request was recorded,
+   * but the core job runner exposes no cooperative cancellation seam, so the
+   * in-flight turn may still complete and will record its real terminal state.
+   * No fake cancellation is ever reported.
+   */
+  effective: boolean;
+  note: string;
+}
+
+/**
+ * Interrupt the session's LATEST in-flight turn job (user interrupt → the
+ * avatar's `interrupted` state). Honesty laws mirror lab/compute.ts
+ * cancelCompute: queued → effective; running → durable request only.
+ */
+export async function interruptRuntimeTurn(
+  tenantId: string,
+  sessionId: string,
+): Promise<InterruptRuntimeTurnResult> {
+  const session = await db.agentRuntimeSession.findFirst({ where: { id: sessionId, tenantId } });
+  if (!session) throw notFound(`agent session "${sessionId}" not found`);
+  if (session.status !== 'live') {
+    throw conflict(`agent session "${sessionId}" has ended — nothing to interrupt`);
+  }
+
+  // the latest jobbed user turn is the interrupt anchor (the exchange the
+  // user sees as “in flight”)
+  const pendingTurn = await db.agentRuntimeTurn.findFirst({
+    where: { sessionId: session.id, role: 'user', jobId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!pendingTurn?.jobId) {
+    throw conflict(
+      `agent session "${session.id}" has no turn in flight — interrupt applies only to a queued or running turn job`,
+    );
+  }
+  const job = await db.job.findUnique({ where: { id: pendingTurn.jobId } });
+  if (!job || (job.status !== 'queued' && job.status !== 'running')) {
+    throw conflict(
+      `agent session "${session.id}" has no turn in flight — interrupt applies only to a queued or running turn job`,
+    );
+  }
+
+  if (job.status === 'queued') {
+    const finishedAt = new Date();
+    await db.job.update({
+      where: { id: job.id },
+      data: {
+        status: 'cancelled',
+        finishedAt,
+        progress: 1,
+        error: 'interrupted by the user while queued — effective cancellation (the runtime never picked the turn up; no reply was or will be produced)',
+      },
+    });
+    await emitEvent(tenantId, 'agent.turn.interrupted', 'agent_runtime_session', session.id, {
+      sessionId: session.id,
+      jobId: job.id,
+      turnId: pendingTurn.id,
+      effective: true,
+      note: 'cancelled while QUEUED — the core runner refuses non-queued jobs, so this cancellation is effective; provider execution never started',
+    });
+    return {
+      jobId: job.id,
+      effective: true,
+      note: 'Turn cancelled before the runtime picked it up — no reply was or will be produced. The message stays recorded; send another turn to continue.',
+    };
+  }
+
+  // RUNNING: record the durable request — never fake a cancellation
+  await emitEvent(tenantId, 'agent.turn.interrupt_requested', 'agent_runtime_session', session.id, {
+    sessionId: session.id,
+    jobId: job.id,
+    turnId: pendingTurn.id,
+    effective: false,
+    note: 'interrupt requested while RUNNING — the core job runner (Worker A lane) exposes no cooperative cancellation seam and the chat seam exposes no task-revocation API, so the in-flight turn may still complete and will record its real terminal state',
+  });
+  return {
+    jobId: job.id,
+    effective: false,
+    note: 'Interrupt recorded — the runtime has no cooperative cancel seam for a running turn, so it may still complete and be recorded. The avatar shows the honest interrupted state meanwhile.',
+  };
+}
+
 // ─── Turn submission (durable agent.turn job) ────────────────────────────────
 
 export interface SubmitTurnResult {
@@ -747,7 +843,7 @@ export async function submitRuntimeTurn(
       if (input.userTurnId) {
         const turn = await db.agentRuntimeTurn.findUnique({ where: { id: input.userTurnId } });
         if (turn) {
-          return { jobId: existing.id, turn: runtimeTurnView(turn, existing.status, existing.error ?? null), replayed: true };
+          return { jobId: existing.id, turn: runtimeTurnView(turn, existing), replayed: true };
         }
       }
     }
@@ -772,7 +868,7 @@ export async function submitRuntimeTurn(
   });
 
   const refreshed = await db.agentRuntimeTurn.findUnique({ where: { id: userTurn.id } });
-  return { jobId: job.id, turn: runtimeTurnView(refreshed ?? userTurn), replayed: false };
+  return { jobId: job.id, turn: runtimeTurnView(refreshed ?? userTurn, job), replayed: false };
 }
 
 // Compile-time guard: the system-prompt compiler stays wired to the same

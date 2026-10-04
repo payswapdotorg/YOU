@@ -9,12 +9,19 @@
 // REAL turn history (states = emitted performance events, per-turn seed and
 // model provenance, honest job-status joins). Degraded/error states follow
 // the B8 pattern (typed envelopes, retry guidance, consent surfaces).
+//
+// P6.B7 — embodiment surface: the avatar stage is driven by the PURE
+// deriveEmbodimentState() state machine (lib/you/agent/embodiment.ts) over
+// the real session/turn/job join — the FULL P4 state set with an honest WHY
+// (turn transparency), a user interrupt of the in-flight turn (interrupted →
+// idle), inactivity idle + re-engage, and per-soul provider status from the
+// C5 registry health (lib/you/agent/soul-providers.ts). No fake liveness.
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Bot, ChevronRight, Ghost, History, Loader2, Lock, MessageSquare, Play, RefreshCcw,
+  Bot, ChevronRight, Ghost, Hand, History, Loader2, Lock, MessageSquare, Play, RefreshCcw,
   Send, ShieldAlert, Sparkles, StopCircle, Wrench, Dices,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,6 +31,8 @@ import type {
   AgentRuntimeSoulView, AgentRuntimeTurnView,
 } from '@/lib/you/agent/runtime-core';
 import type { AgentPerformanceEvent } from '@/lib/you/contracts';
+import { deriveEmbodimentState } from '@/lib/you/agent/embodiment';
+import { resolveSoulProviderBinding, type SoulProviderStatusRow } from '@/lib/you/agent/soul-providers';
 import { useYouStore } from '@/hooks/you/use-you-store';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -58,15 +67,7 @@ function isUnavailable(err: unknown): boolean {
   return err instanceof YouApiError && (err.status === 503 || err.code === 'service_unavailable');
 }
 
-// ─── Current avatar state (real events only) ─────────────────────────────────
-function currentAvatarState(session: AgentRuntimeSessionView | null | undefined) {
-  if (!session) return { state: null as AgentPerformanceEvent['type'] | null, at: null as string | null };
-  const turnsWithStates = [...(session.turns ?? [])].reverse().filter((t) => t.states?.length);
-  const last = turnsWithStates[0];
-  const ev = last?.states?.[last.states.length - 1];
-  return { state: ev?.type ?? null, at: ev?.timestamp ?? null };
-}
-
+// ─── Embodiment state (P6.B7 — derived, never animated) ──────────────────────
 function allEvents(session: AgentRuntimeSessionView | null | undefined): AgentPerformanceEvent[] {
   if (!session) return [];
   return (session.turns ?? []).flatMap((t) => t.states ?? []);
@@ -131,6 +132,12 @@ function SessionPanel({
   const [consentError, setConsentError] = useState<string | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // P6.B7 embodiment inputs — all REAL signals, no fabricated liveness:
+  const [composerActive, setComposerActive] = useState(false); // the user is composing (a UI event)
+  const [interruptedJobs, setInterruptedJobs] = useState<string[]>([]); // acknowledged interrupts
+  const [degradedWhy, setDegradedWhy] = useState<string | null>(null); // last submit refused by the breaker
+  const [, setClockTick] = useState(0); // UI clock for the DOCUMENTED idle threshold (state still derives from real data)
 
   const session = useQuery({
     queryKey: ['agent-runtime-session', sessionId],
@@ -145,8 +152,27 @@ function SessionPanel({
 
   const data = session.data ?? null;
   const live = data?.status === 'live';
-  const { state, at } = currentAvatarState(data);
   const events = allEvents(data);
+
+  // P6.B7 — the embodiment state machine: a PURE derivation over the real
+  // session/turn/job join + the real UI signals above. Never animated.
+  const embodied = deriveEmbodimentState({
+    sessionStatus: data?.status ?? 'live',
+    endedAt: data?.endedAt ?? null,
+    turns: data?.turns ?? [],
+    composerActive,
+    interruptedJobIds: interruptedJobs,
+    providerDegradedWhy: degradedWhy,
+  });
+
+  // the settle clock: the inactivity threshold (60s, documented in
+  // embodiment.ts) needs a re-render to land — a cheap 15s tick while the
+  // panel is mounted. The tick changes NOTHING by itself: the state still
+  // derives from real runtime data only.
+  useEffect(() => {
+    const t = setInterval(() => setClockTick((x) => x + 1), 15_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: 'nearest' }); }, [data?.turns.length, session.isFetching]);
 
@@ -160,6 +186,7 @@ function SessionPanel({
     onSuccess: () => {
       setMessage('');
       setConsentError(null);
+      setDegradedWhy(null); // a submit the breaker ACCEPTED clears the degraded flag
       qc.invalidateQueries({ queryKey: ['agent-runtime-session', sessionId] });
     },
     onError: (err) => {
@@ -169,11 +196,33 @@ function SessionPanel({
         setConsentError(err instanceof YouApiError ? err.message : 'consent_required');
       } else if (isUnavailable(err)) {
         const secs = err instanceof YouApiError && err.retryAfterMs ? Math.ceil(err.retryAfterMs / 1000) : null;
+        setDegradedWhy(
+          `chat provider unavailable — the accept-time circuit breaker refused this turn${secs ? ` (cooling, ~${secs}s)` : ''}; retrying is safe`,
+        );
         toast.error(`Chat provider unavailable — retrying is safe${secs ? ` (circuit breaker cooling, ~${secs}s)` : ''}`);
       } else {
         const msg = err instanceof YouApiError ? err.message : 'request failed';
         toast.error(`Turn failed — ${msg}`);
       }
+    },
+  });
+
+  // P6.B7 — user interrupt of the in-flight turn (honest: queued → effective
+  // cancellation; running → durable request that may still complete)
+  const interruptTurn = useMutation({
+    mutationFn: () => api.agentRuntime.interruptTurn(sessionId, uid()),
+    onSuccess: (result) => {
+      setInterruptedJobs((ids) => (ids.includes(result.jobId) ? ids : [...ids, result.jobId]));
+      if (result.effective) {
+        toast.success('Turn cancelled before the runtime picked it up', { description: result.note });
+      } else {
+        toast.info('Interrupt recorded — the running turn may still complete', { description: result.note });
+      }
+      qc.invalidateQueries({ queryKey: ['agent-runtime-session', sessionId] });
+    },
+    onError: (err) => {
+      const msg = err instanceof YouApiError ? err.message : 'request failed';
+      toast.error(`Interrupt failed — ${msg}`);
     },
   });
 
@@ -286,7 +335,20 @@ function SessionPanel({
             <IdChip id={data.id} label="session" />
           </div>
 
-          <AvatarStage state={state} stateAt={at} recentEvents={events} ended={!live} />
+          <AvatarStage state={embodied.state} stateAt={embodied.since} why={embodied.why} recentEvents={events} ended={!live} />
+
+          {/* P6.B7 — idle after inactivity with a real re-engage action
+              (focus the composer → the avatar listens) */}
+          {live && !embodied.inFlight && embodied.state === 'idle' ? (
+            <div className="flex justify-center">
+              <Button
+                size="sm" variant="outline" className="h-8 gap-1.5 text-xs"
+                onClick={() => inputRef.current?.focus()}
+              >
+                <MessageSquare className="size-3.5" aria-hidden /> Re-engage the avatar
+              </Button>
+            </div>
+          ) : null}
 
           {/* chat */}
           <div>
@@ -337,14 +399,29 @@ function SessionPanel({
               }}
             >
               <Input
+                ref={inputRef}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
+                onFocus={() => setComposerActive(true)}
+                onBlur={() => setComposerActive(false)}
                 placeholder={live ? 'Message the avatar…' : 'Session ended'}
                 disabled={!live || sendTurn.isPending}
                 className="h-9"
                 aria-label="Message"
               />
-              <Button type="submit" size="sm" className="gap-1.5" disabled={!live || !message.trim() || sendTurn.isPending}>
+              {embodied.inFlight && live ? (
+                <Button
+                  type="button" size="sm" variant="outline"
+                  className="h-11 gap-1.5 text-amber-700 hover:text-amber-700 sm:h-9 dark:text-amber-400 dark:hover:text-amber-400"
+                  disabled={interruptTurn.isPending}
+                  onClick={() => interruptTurn.mutate()}
+                  aria-label="Interrupt the in-flight turn"
+                >
+                  {interruptTurn.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Hand className="size-3.5" aria-hidden />}
+                  <span className="hidden sm:inline">Interrupt</span>
+                </Button>
+              ) : null}
+              <Button type="submit" size="sm" className="h-11 gap-1.5 sm:h-9" disabled={!live || !message.trim() || sendTurn.isPending}>
                 {sendTurn.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Send className="size-3.5" aria-hidden />}
                 Send
               </Button>
@@ -368,6 +445,7 @@ function SessionPanel({
 // ─── One turn bubble (chat message + honest provenance + job state) ──────────
 function TurnBubble({ turn }: { turn: AgentRuntimeTurnView }) {
   const failed = turn.jobStatus === 'failed' || turn.jobStatus === 'dead';
+  const cancelled = turn.jobStatus === 'cancelled';
   const pending = turnJobPending(turn);
   return (
     <div className={cn('flex flex-col', turn.role === 'user' ? 'items-end' : 'items-start')}>
@@ -396,6 +474,12 @@ function TurnBubble({ turn }: { turn: AgentRuntimeTurnView }) {
         {pending ? (
           <span className="you-pulse inline-flex items-center gap-1 text-sky-700 dark:text-sky-400">
             <Loader2 className="size-2.5 animate-spin" aria-hidden /> turn job {turn.jobStatus}
+            {turn.jobStep?.detail ? <span className="text-muted-foreground"> · {turn.jobStep.detail}</span> : null}
+          </span>
+        ) : null}
+        {cancelled ? (
+          <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+            <Hand className="size-2.5" aria-hidden /> interrupted — cancelled while queued; no reply was produced
           </span>
         ) : null}
       </div>
@@ -541,6 +625,97 @@ function StartSessionCard({
   );
 }
 
+// ─── One Soul card + the P6.B7 per-soul provider status surface ──────────────
+function SoulCard({
+  soul: s, providers, providersPending, providersError,
+}: {
+  soul: AgentRuntimeSoulView;
+  providers: SoulProviderStatusRow[] | null;
+  providersPending: boolean;
+  providersError: boolean;
+}) {
+  // per-soul provider status — resolved from the C5 registry health rows
+  // (env-config + chat-adapter + breaker). Honest unknown while loading/error.
+  let providerStatus: { ok: boolean; reason: string } | null = null;
+  if (providers) {
+    const resolved = resolveSoulProviderBinding(s.provider, providers);
+    providerStatus = { ok: resolved.available, reason: resolved.reason };
+  }
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-medium">{s.name}</span>
+            <span className="you-num font-mono text-[10px] text-muted-foreground">v{s.version}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <Badge variant="outline" className="gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+              <Lock className="size-2.5" aria-hidden /> twin: {s.twinDisplayName}
+            </Badge>
+            <Badge variant="outline" className="font-mono text-[10px]">{s.provider} · {s.model}</Badge>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5">
+          <StatusBadge status={s.status} />
+          <LifecycleButtons kind="soul" id={s.id} status={s.status} />
+        </div>
+      </div>
+      {/* P6.B7 — provider status surface (registry health, fail-closed) */}
+      <div className="mt-1.5" aria-label={`Provider status for soul ${s.name}`}>
+        {providersPending ? (
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Loader2 className="size-2.5 animate-spin" aria-hidden /> resolving provider status…
+          </span>
+        ) : providersError ? (
+          <span className="text-[10px] text-muted-foreground">
+            provider status unknown — the registry list failed; retry from the New Soul dialog
+          </span>
+        ) : providerStatus ? (
+          <span
+            className={cn(
+              'inline-flex items-start gap-1 text-[10px] leading-snug',
+              providerStatus.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400',
+            )}
+            title={providerStatus.reason}
+          >
+            <span
+              className={cn('mt-1 inline-block size-1.5 shrink-0 rounded-full', providerStatus.ok ? 'bg-emerald-500' : 'bg-amber-500')}
+              aria-hidden
+            />
+            provider {s.provider}: {providerStatus.ok ? 'available' : 'unavailable'} — {providerStatus.reason}
+          </span>
+        ) : null}
+      </div>
+      {s.persona.tagline ? (
+        <p className="mt-1.5 text-[11px] text-muted-foreground">“{s.persona.tagline}”</p>
+      ) : null}
+      {s.persona.traits.length ? (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {s.persona.traits.slice(0, 5).map((t) => (
+            <Badge key={t} variant="outline" className="text-[9px]">{t}</Badge>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <span className="text-[9px] text-muted-foreground">can:</span>
+        {s.manifest.can.length ? s.manifest.can.map((c) => (
+          <Badge key={c} variant="outline" className="border-emerald-500/30 font-mono text-[9px] text-emerald-700 dark:text-emerald-400">{c}</Badge>
+        )) : <span className="font-mono text-[9px] text-muted-foreground">nothing</span>}
+        {s.manifest.cannot.length ? (
+          <span className="text-[9px] text-muted-foreground">· cannot: {s.manifest.cannot.join(', ')}</span>
+        ) : null}
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-0.5"><Dices className="size-2.5" aria-hidden /> seed {s.seed}</span>
+        {typeof s.params.thinking === 'boolean' ? <span>thinking {s.params.thinking ? 'on' : 'off'}</span> : null}
+        {typeof s.params.temperature === 'number' ? <span>temp {s.params.temperature}</span> : <span>temp seeded/turn</span>}
+      </div>
+      <div className="mt-2 border-t pt-2"><IdChip id={s.id} label="soul" /></div>
+    </div>
+  );
+}
+
 // ─── View ────────────────────────────────────────────────────────────────────
 export function AgentAvatarsView() {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -548,6 +723,8 @@ export function AgentAvatarsView() {
   const bodies = useQuery({ queryKey: ['agent-runtime-bodies'], queryFn: () => api.agentRuntime.bodies() });
   const souls = useQuery({ queryKey: ['agent-runtime-souls'], queryFn: () => api.agentRuntime.souls() });
   const sessions = useQuery({ queryKey: ['agent-runtime-sessions'], queryFn: () => api.agentRuntime.sessions() });
+  // P6.B7 — the C5 registry provider health (Soul wiring + per-soul status)
+  const providers = useQuery({ queryKey: ['agent-providers'], queryFn: () => api.agentRuntime.providers() });
 
   // keep the session list fresh when a session view exists (turn counts)
   const sessionList = useMemo<AgentRuntimeSessionSummaryView[]>(
@@ -648,7 +825,14 @@ export function AgentAvatarsView() {
           title="Agent Souls"
           description={`${souls.data?.length ?? 0} twin-bound personalities`}
           icon={Ghost}
-          actions={<SoulCreateDialog />}
+          actions={(
+            <SoulCreateDialog
+              providers={providers.data ?? []}
+              providersPending={providers.isPending}
+              providersError={providers.isError}
+              onRetryProviders={() => void providers.refetch()}
+            />
+          )}
         >
           {souls.isPending ? (
             <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
@@ -666,51 +850,7 @@ export function AgentAvatarsView() {
           ) : (
             <div className="you-scroll max-h-[560px] space-y-2.5 overflow-y-auto">
               {souls.data.map((s) => (
-                <div key={s.id} className="rounded-lg border bg-card p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium">{s.name}</span>
-                        <span className="you-num font-mono text-[10px] text-muted-foreground">v{s.version}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        <Badge variant="outline" className="gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
-                          <Lock className="size-2.5" aria-hidden /> twin: {s.twinDisplayName}
-                        </Badge>
-                        <Badge variant="outline" className="font-mono text-[10px]">{s.provider} · {s.model}</Badge>
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1.5">
-                      <StatusBadge status={s.status} />
-                      <LifecycleButtons kind="soul" id={s.id} status={s.status} />
-                    </div>
-                  </div>
-                  {s.persona.tagline ? (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">“{s.persona.tagline}”</p>
-                  ) : null}
-                  {s.persona.traits.length ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {s.persona.traits.slice(0, 5).map((t) => (
-                        <Badge key={t} variant="outline" className="text-[9px]">{t}</Badge>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[9px] text-muted-foreground">can:</span>
-                    {s.manifest.can.length ? s.manifest.can.map((c) => (
-                      <Badge key={c} variant="outline" className="border-emerald-500/30 font-mono text-[9px] text-emerald-700 dark:text-emerald-400">{c}</Badge>
-                    )) : <span className="font-mono text-[9px] text-muted-foreground">nothing</span>}
-                    {s.manifest.cannot.length ? (
-                      <span className="text-[9px] text-muted-foreground">· cannot: {s.manifest.cannot.join(', ')}</span>
-                    ) : null}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                    <span className="inline-flex items-center gap-0.5"><Dices className="size-2.5" aria-hidden /> seed {s.seed}</span>
-                    {typeof s.params.thinking === 'boolean' ? <span>thinking {s.params.thinking ? 'on' : 'off'}</span> : null}
-                    {typeof s.params.temperature === 'number' ? <span>temp {s.params.temperature}</span> : <span>temp seeded/turn</span>}
-                  </div>
-                  <div className="mt-2 border-t pt-2"><IdChip id={s.id} label="soul" /></div>
-                </div>
+                <SoulCard key={s.id} soul={s} providers={providers.data ?? null} providersPending={providers.isPending} providersError={providers.isError} />
               ))}
             </div>
           )}
