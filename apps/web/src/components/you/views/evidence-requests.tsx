@@ -570,14 +570,20 @@ function DeficiencyDeltaPanel({
 
   if (q.isPending) return <Skeleton className="h-10 w-full rounded-lg" />;
 
-  // tolerant read: top-level array or { deficiencies: [...] } — B4's exact
-  // contract is frozen by the parallel lane, nothing is fabricated here
-  const payload = q.data;
-  const records: DeficiencyRecordView[] | null = Array.isArray(payload)
-    ? payload
-    : payload && typeof payload === 'object' && Array.isArray((payload as { deficiencies?: DeficiencyRecordView[] }).deficiencies)
-      ? (payload as { deficiencies: DeficiencyRecordView[] }).deficiencies
-      : null;
+  // tolerant read: top-level array, { deficiencies: [...] }, or B4's frozen
+  // envelope { report: { deficiencies: [...] } } — TL integration merge:
+  // B4 landed the canonical route; all three shapes are accepted, nothing
+  // is fabricated here
+  const payload: unknown = q.data;
+  const records: DeficiencyRecordView[] | null = (() => {
+    if (Array.isArray(payload)) return payload as DeficiencyRecordView[];
+    if (payload && typeof payload === 'object') {
+      const p = payload as { deficiencies?: unknown; report?: { deficiencies?: unknown } };
+      if (Array.isArray(p.deficiencies)) return p.deficiencies as DeficiencyRecordView[];
+      if (p.report && Array.isArray(p.report.deficiencies)) return p.report.deficiencies as DeficiencyRecordView[];
+    }
+    return null;
+  })();
 
   if (!records) {
     return (
