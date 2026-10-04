@@ -287,6 +287,14 @@ paths:
     get:
       summary: Try-on garments — garment detail (P6.C8)
       responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /develop/playground:
+    get:
+      summary: Develop playground — sandbox status + frozen-inventory count (P6.B9)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}}
+  /develop/playground/execute:
+    post:
+      summary: Develop playground — execute an operation against the real API (mutation-confirmation gated, rate-limited; P6.B9)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "401": {"description": "Unauthorized"}, "409": {"description": "Conflict"}, "429": {"description": "Too Many Requests"}}
   /maintenance/dead-jobs:
     get:
       summary: Maintenance — list dead-lettered jobs (operator session)
