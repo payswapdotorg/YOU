@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc -b",
     "test": "node --test tests/contract/smoke.test.mjs",
+    "test:e2e": "node --test tests/e2e/",
     "lint": "node scripts/lint-placeholder.mjs"
   },
   "devDependencies": {
