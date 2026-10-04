@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Activity, BookOpen, ChevronDown, KeyRound, Loader2, Plus, RefreshCcw, Trash2, Webhook, Zap,
+  Activity, BookOpen, ChevronDown, GraduationCap, KeyRound, Loader2, Play, Plus, RefreshCcw, Trash2, Webhook, Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
@@ -37,6 +37,8 @@ import { EmptyState, IdChip, PageHeader, SectionCard, StatusBadge } from '@/comp
 import { CodeBlock, CopyButton } from '@/components/you/artifact/copy-button';
 import { UsagePanel } from '@/components/you/develop/usage-panel';
 import { DocsPanel } from '@/components/you/develop/docs-panel';
+import { PlaygroundPanel } from '@/components/you/develop/playground-panel';
+import { ExamplesPanel } from '@/components/you/develop/examples-panel';
 import { QueryError } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
 
@@ -530,17 +532,21 @@ export function DevelopView() {
       <PageHeader
         eyebrow="Develop"
         title="API & Tools"
-        description="Keys, events, webhooks and usage for the developer platform — HTTP, SDK and MCP all call the same application services behind this Studio."
+        description="Playground, examples, keys, events, webhooks and usage for the developer platform — HTTP, SDK and MCP all call the same application services behind this Studio."
       />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="you-scroll h-auto w-full max-w-full overflow-x-auto">
+          <TabsTrigger value="playground" className="gap-1.5"><Play className="size-3.5" aria-hidden /> Playground</TabsTrigger>
+          <TabsTrigger value="examples" className="gap-1.5"><GraduationCap className="size-3.5" aria-hidden /> Examples</TabsTrigger>
           <TabsTrigger value="keys" className="gap-1.5"><KeyRound className="size-3.5" aria-hidden /> API Keys</TabsTrigger>
           <TabsTrigger value="events" className="gap-1.5"><Activity className="size-3.5" aria-hidden /> Events</TabsTrigger>
           <TabsTrigger value="webhooks" className="gap-1.5"><Webhook className="size-3.5" aria-hidden /> Webhooks</TabsTrigger>
           <TabsTrigger value="usage" className="gap-1.5"><Zap className="size-3.5" aria-hidden /> Usage</TabsTrigger>
           <TabsTrigger value="docs" className="gap-1.5"><BookOpen className="size-3.5" aria-hidden /> Docs</TabsTrigger>
         </TabsList>
+        <TabsContent value="playground" className="mt-4"><PlaygroundPanel /></TabsContent>
+        <TabsContent value="examples" className="mt-4"><ExamplesPanel /></TabsContent>
         <TabsContent value="keys" className="mt-4"><ApiKeysTab /></TabsContent>
         <TabsContent value="events" className="mt-4"><EventsTab /></TabsContent>
         <TabsContent value="webhooks" className="mt-4"><WebhooksTab /></TabsContent>
