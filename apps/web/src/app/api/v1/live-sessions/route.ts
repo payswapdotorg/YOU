@@ -20,7 +20,9 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  return handleRoute(async () => {
+  // P6.C12: observed under the declared 'live.session.setup' SLO (docs/COST_LATENCY.md).
+  const observedRoute = (fn: () => Promise<Response>) => handleRoute(fn, { request, slo: 'live.session.setup' });
+  return observedRoute(async () => {
     const auth = await requireApiAuth(request);
     const body = await readJsonBody(request);
     try {

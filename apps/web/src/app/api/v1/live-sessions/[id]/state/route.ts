@@ -18,7 +18,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  return handleRoute(async () => {
+  // P6.C12: observed under the declared 'live.state.stream' SLO (docs/COST_LATENCY.md).
+  const observedRoute = (fn: () => Promise<Response>) => handleRoute(fn, { request, slo: 'live.state.stream' });
+  return observedRoute(async () => {
     const auth = await requireApiAuth(request);
     const { id } = await params;
     const body = await readJsonBody(request);

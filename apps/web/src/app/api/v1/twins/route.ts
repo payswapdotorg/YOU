@@ -7,7 +7,9 @@ import { audit, emitEvent } from '@/lib/you/core/events';
 import { twinView } from '@/lib/you/core/views';
 
 export async function GET(request: Request): Promise<Response> {
-  return handleRoute(async () => {
+  // P6.C12: observed under the declared 'api.read' SLO (docs/COST_LATENCY.md).
+  const observedRoute = (fn: () => Promise<Response>) => handleRoute(fn, { request, slo: 'api.read' });
+  return observedRoute(async () => {
     const auth = await requireApiAuth(request);
     const twins = await db.twin.findMany({
       where: { tenantId: auth.tenantId },

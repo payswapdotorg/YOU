@@ -53,11 +53,24 @@ import { emitEvent } from './events';
 import { assertProviderAvailable } from '../core/circuit-breaker';
 import { bumpCounter } from '../core/metrics';
 import {
+  BUDGET_ENV,
+  BUDGET_METRIC,
+  budgetConfigFromRow,
+  budgetGuardDecision,
+  parseEnvBudget,
+  parseAccrualMeta,
+  pickBudgetRow,
+  periodStartedAt,
+  accrualSumUsd,
+  type AccrualRow,
+  type BudgetConfig,
+  type BudgetRow,
+} from './cost-budgets';
+import {
   BROKER_WORKLOADS,
   MODELED_LATENCY_MS,
   PROVIDER_ADAPTERS,
   QUOTA_WINDOW_HOURS,
-  COMPUTE_QUOTA_ENV,
   COMPUTE_PROVIDER_ENV,
   COMPUTE_PROVIDER_TABLE,
   costFor,
@@ -66,8 +79,6 @@ import {
   isBrokerWorkload,
   parseComputeProviderList,
   parseEmbeddedCompute,
-  parseTenantCostCeiling,
-  quotaDecision,
   renderProviderForRouting,
   resolveAdapter,
   routeCompute,
@@ -121,6 +132,13 @@ export interface ComputeSubmission extends ComputeRequest {
   idempotencyKey?: string;
   /** render adapter hint ('svg-portrait-1' | 'ai-image-1'); affects quote honesty */
   adapter?: string;
+  /**
+   * P6.C12 (PR-13): the submitting APPLICATION ACTOR (an API key id) when
+   * the submit originates from an application actor — scopes db budget rows
+   * and usage accrual per application. Absent for interactive human
+   * sessions (they accrue tenant-wide with application null).
+   */
+  applicationActorId?: string;
 }
 
 // ─── Quote shape — every number carries its basis ───────────────────────────
@@ -468,11 +486,119 @@ export interface RoutedSubmitResult {
   quote: ComputeQuote;
   providerId: ComputeProviderId;
   routedVia: string;
+  /** P6.C12: the budget config the guard actually used (source disclosed). */
+  budget: BudgetConfig;
 }
 
 interface RoutedSubmission extends ComputeSubmission {
   /** force a specific provider (used by DashScopeRenderProvider.submit); default = routed. */
   provider?: ComputeProviderId;
+}
+
+// ─── P6.C12 (PR-13): the cost-budget layer (db-bound half) ──────────────────
+
+/**
+ * The tenant's accrual rows for the budget metric in a rolling period
+ * (bounded to the 1000 most recent — the same disclosed-bound law as
+ * tenantQuotedSpendUsd). Application-scoped budgets filter by the
+ * applicationActorId meta field client-side (meta is a JSON string column).
+ */
+export async function budgetAccrualRows(
+  tenantId: string,
+  since: Date,
+  applicationActorId?: string | null,
+): Promise<AccrualRow[]> {
+  const rows = await db.usageRecord.findMany({
+    where: { tenantId, metric: BUDGET_METRIC, createdAt: { gte: since } },
+    orderBy: { createdAt: 'desc' },
+    take: 1000,
+    select: { quantity: true, createdAt: true, meta: true },
+  });
+  const out: AccrualRow[] = [];
+  for (const row of rows) {
+    const meta = parseAccrualMeta(row.meta);
+    if (applicationActorId !== undefined && applicationActorId !== null) {
+      if (meta.applicationActorId !== applicationActorId) continue;
+    }
+    out.push({
+      quantity: row.quantity,
+      createdAt: row.createdAt,
+      workload: meta.workload,
+      applicationActorId: meta.applicationActorId,
+      jobId: meta.jobId,
+    });
+  }
+  return out;
+}
+
+/**
+ * Resolve the budget config for a submit: the MOST SPECIFIC db CostBudget row
+ * for (tenant, application, workload) wins; without rows the env ceiling
+ * applies (parseEnvBudget — the explicit unlimited opt-in lives there);
+ * without either, the documented fail-closed default. A db row ALWAYS beats
+ * the env value (rows are the deliberate, more specific operator choice);
+ * invalid rows are skipped by the pure picker (a garbage row can never
+ * disable the guard).
+ */
+export async function resolveCostBudget(opts: {
+  tenantId: string;
+  workload: string;
+  applicationActorId?: string | null;
+}): Promise<BudgetConfig> {
+  const rows: BudgetRow[] = await db.costBudget.findMany({
+    where: { tenantId: opts.tenantId },
+    select: { id: true, applicationId: true, pipeline: true, budgetUsd: true, periodHours: true, note: true, updatedAt: true },
+  });
+  const picked = pickBudgetRow(rows, {
+    tenantId: opts.tenantId,
+    applicationId: opts.applicationActorId ?? null,
+    workload: opts.workload,
+  });
+  if (picked !== null) {
+    return budgetConfigFromRow(picked);
+  }
+  return parseEnvBudget(currentEnv()[BUDGET_ENV]);
+}
+
+/**
+ * Accrue one broker submit's quoted cost (P6.C12): a UsageRecord row under
+ * metric 'compute.quoted_usd' with meta { workload, providerId, jobId,
+ * applicationActorId, basis }. The accrual is the durable per-pipeline /
+ * per-application usage truth behind GET /api/v1/usage's cost section and the
+ * budget guard's window spend. Honest best-effort: a failure LOGS (the submit
+ * already succeeded — the durable job exists) and is counted, never thrown.
+ */
+async function accrueQuotedCost(opts: {
+  tenantId: string;
+  workload: string;
+  providerId: string;
+  jobId: string;
+  quotedUsd: number;
+  basis: string;
+  applicationActorId?: string | null;
+}): Promise<void> {
+  try {
+    await db.usageRecord.create({
+      data: {
+        tenantId: opts.tenantId,
+        metric: BUDGET_METRIC,
+        quantity: Number.isFinite(opts.quotedUsd) && opts.quotedUsd >= 0 ? opts.quotedUsd : 0,
+        meta: JSON.stringify({
+          workload: opts.workload,
+          providerId: opts.providerId,
+          jobId: opts.jobId,
+          applicationActorId: opts.applicationActorId ?? null,
+          basis: opts.basis,
+        }),
+      },
+    });
+  } catch (err) {
+    bumpCounter('budget_accrual_failures', { workload: opts.workload });
+    console.error(
+      `[you:budget] accrueQuotedCost(${opts.workload}, $${opts.quotedUsd}) failed:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 /**
@@ -533,19 +659,42 @@ export async function submitComputeRouted(req: RoutedSubmission): Promise<Routed
     throw new Error(`compute_refused: ${quote.rejectReason ?? 'quote not acceptable'}`);
   }
 
-  // 4. per-tenant quoted-cost guard (fail-closed)
-  const ceiling = parseTenantCostCeiling(currentEnv()[COMPUTE_QUOTA_ENV]);
-  const windowSpend = await tenantQuotedSpendUsd(req.tenantId);
-  const guard = quotaDecision({
-    ceilingUsd: ceiling,
-    windowSpendUsd: windowSpend,
-    quotedUsd: quote.cost.usd,
+  // 4. cost-budget guard (P6.C12 / PR-13 — db-backed budgets with env/default
+  //    fallback; fail-closed: unlimited is an EXPLICIT env opt-in, never a
+  //    default). The window spend is the UsageRecord accrual (metric
+  //    'compute.quoted_usd') over the config's rolling period — the same
+  //    conservative modeled-basis numbers the /api/v1/usage cost section
+  //    reports. Application-scoped rows count only that application actor's
+  //    accrual; tenant-wide rows count everything.
+  const budgetConfig = await resolveCostBudget({
+    tenantId: req.tenantId,
     workload,
-    providerId,
+    applicationActorId: req.applicationActorId ?? null,
   });
-  if (!guard.allowed || guard.refusal !== null) {
-    bumpCounter('compute_quota_refusals', { workload });
-    throw new ComputeQuotaExceededError(guard.refusal as { code: 'compute_quota_exceeded' | 'compute_quota_unverifiable'; message: string; details: Record<string, unknown> });
+  if (budgetConfig.mode === 'unlimited') {
+    // the EXPLICIT operator opt-out (env token only — db rows always apply)
+    bumpCounter('compute_budget_unlimited_skips', { workload });
+  } else {
+    const since = periodStartedAt(new Date(), budgetConfig.periodHours);
+    const accrualScope =
+      budgetConfig.applicationId !== null ? (req.applicationActorId ?? null) : undefined;
+    const rows = await budgetAccrualRows(req.tenantId, since, accrualScope);
+    const accruedUsd = accrualSumUsd(rows);
+    const guard = budgetGuardDecision({
+      config: budgetConfig,
+      accruedUsd,
+      quotedUsd: quote.cost.usd,
+      workload,
+      providerId,
+    });
+    if (!guard.allowed || guard.refusal !== null) {
+      bumpCounter('compute_quota_refusals', { workload });
+      throw new ComputeQuotaExceededError(guard.refusal as {
+        code: 'compute_quota_exceeded' | 'compute_quota_unverifiable';
+        message: string;
+        details: Record<string, unknown>;
+      });
+    }
   }
 
   // 5. durable job with the routing record + quote embedded
@@ -562,6 +711,19 @@ export async function submitComputeRouted(req: RoutedSubmission): Promise<Routed
     quote,
   });
   const job = await createJob(req.tenantId, WORKLOAD_JOB_KIND[workload], input, req.idempotencyKey);
+
+  // 6. P6.C12: accrue the quoted cost per tenant/application/pipeline (the
+  //    durable usage truth behind the budget guard + GET /api/v1/usage)
+  await accrueQuotedCost({
+    tenantId: req.tenantId,
+    workload,
+    providerId,
+    jobId: job.id,
+    quotedUsd: quote.cost.usd,
+    basis: quote.cost.basis,
+    applicationActorId: req.applicationActorId ?? null,
+  });
+
   await emitEvent(req.tenantId, 'compute.submitted', 'job', job.id, {
     jobId: job.id,
     workload,
@@ -572,9 +734,10 @@ export async function submitComputeRouted(req: RoutedSubmission): Promise<Routed
       cost: { usd: quote.cost.usd, basis: quote.cost.basis },
       latency: { p50EstimateMs: quote.latency.p50EstimateMs, basis: quote.latency.basis, observedRuns: quote.latency.observedRuns },
     },
+    budget: { source: budgetConfig.source, mode: budgetConfig.mode, budgetUsd: budgetConfig.budgetUsd },
   });
 
-  return { jobId: job.id, quote, providerId, routedVia };
+  return { jobId: job.id, quote, providerId, routedVia, budget: budgetConfig };
 }
 
 // ─── P6.C3: executor-facing helpers (embedded routing → render seam) ────────

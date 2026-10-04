@@ -4,6 +4,7 @@
 // Codes follow src/lib/you/contracts ERR map. No fake progress, no fake errors.
 // ═══════════════════════════════════════════════════════════════════════════
 import { ERR } from '../contracts';
+import { recordLatency } from './latency';
 
 export class HttpError extends Error {
   constructor(
@@ -56,14 +57,59 @@ export function jsonError(
 /**
  * Wrap a route handler body: HttpError → its envelope; unknown throw → 500
  * internal_error with the honest message (never swallow real errors).
+ *
+ * P6.C12 — optional latency observation: when `opts.slo` names a declared
+ * SLO bucket (core/latency.ts), the REAL handler wall-clock is measured and
+ * recorded with the middleware-issued x-request-id (the P6.A7 observability
+ * baseline field). Routes without opts keep byte-identical behavior (zero
+ * overhead, zero risk). The measurement point is the handler wrapper, NOT
+ * the middleware — a Next.js middleware cannot observe response completion
+ * (NextResponse.next() resolves before the handler runs); documented in
+ * docs/COST_LATENCY.md.
  */
-export async function handleRoute(fn: () => Promise<Response>): Promise<Response> {
+export interface RouteObservationOptions {
+  /** the incoming request (for the x-request-id + route label). */
+  request?: Request;
+  /** explicit route label; derived from the request URL when absent. */
+  route?: string;
+  /** the declared SLO bucket to record under (core/latency.ts). */
+  slo?: 'api.read' | 'live.session.setup' | 'live.state.stream';
+}
+
+export async function handleRoute(
+  fn: () => Promise<Response>,
+  opts?: RouteObservationOptions,
+): Promise<Response> {
+  const observe = opts?.slo !== undefined;
+  const startedAt = observe ? Date.now() : 0;
+  const record = (status: number): void => {
+    if (!observe || opts?.slo === undefined) return;
+    try {
+      const request = opts.request;
+      const route =
+        opts.route ??
+        (request ? `${request.method} ${new URL(request.url).pathname}` : 'unknown-route');
+      recordLatency(opts.slo, {
+        requestId: request?.headers.get('x-request-id') ?? null,
+        route,
+        method: request?.method ?? '',
+        status,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch {
+      // never let a measurement bug break the measured route
+    }
+  };
   try {
-    return await fn();
+    const res = await fn();
+    record(res.status);
+    return res;
   } catch (err) {
     if (err instanceof HttpError) {
+      record(err.status);
       return jsonError(err.code, err.message, err.status, err.details, err.headers);
     }
+    record(500);
     const message = err instanceof Error ? err.message : String(err);
     console.error('[you/api] unhandled route error:', message);
     return jsonError(ERR.INTERNAL, message, 500);

@@ -26,6 +26,19 @@ export async function POST(request: Request): Promise<Response> {
       worldSeed = body.worldSeed;
     }
 
+    // P6.C12: per-run evaluation mode for controlled before/after evidence
+    // ('sequential' = the preserved pre-C12 code path; 'parallel' = the C12
+    // optimized default). Optional + backward compatible — absent falls back
+    // to the env (YOU_LAB_EVALUATION_MODE), then to 'parallel'.
+    let evaluationMode: 'sequential' | 'parallel' =
+      process.env.YOU_LAB_EVALUATION_MODE === 'sequential' ? 'sequential' : 'parallel';
+    if (body.evaluationMode !== undefined && body.evaluationMode !== null) {
+      if (body.evaluationMode !== 'sequential' && body.evaluationMode !== 'parallel') {
+        throw badRequest('evaluationMode must be "sequential" or "parallel"');
+      }
+      evaluationMode = body.evaluationMode;
+    }
+
     const objective = await db.labObjective.findUnique({ where: { code: objectiveCode } });
     if (!objective) throw notFound(`lab objective "${objectiveCode}" not found`);
 
@@ -41,7 +54,7 @@ export async function POST(request: Request): Promise<Response> {
     const job = await createJob(
       auth.tenantId,
       'lab.benchmark',
-      { objectiveCode, worldSeed, benchmarkRunId: run.id, objectiveId: objective.id },
+      { objectiveCode, worldSeed, benchmarkRunId: run.id, objectiveId: objective.id, evaluationMode },
       getIdempotencyKey(request),
     );
 
@@ -50,6 +63,7 @@ export async function POST(request: Request): Promise<Response> {
       jobId: job.id,
       objectiveCode,
       worldSeed,
+      evaluationMode,
     });
 
     return Response.json({ jobId: job.id }, { status: 202 });

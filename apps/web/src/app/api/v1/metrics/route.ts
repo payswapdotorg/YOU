@@ -9,19 +9,27 @@
 //   breakers — circuit-breaker state per provider (zai / openrouter)
 //   deadJobs — tenant-scoped dead-job count + oldest dead job + retention
 //   jobs     — tenant-scoped job counts by status (dead included)
+//   latency  — P6.C12: the declared SLOs + OBSERVED latency stats per bucket
+//              (p50/p95 nearest-rank over real observations only, breach
+//              counters, the last observation with its request_id; honest
+//              nulls when a bucket has no observations yet)
 //
-// Scope honesty: counters and breakers are PROCESS-LOCAL (single-instance
-// truth); db counts are tenant-scoped to the operator's tenant (isolation
-// law). No secrets, no payloads, no cross-tenant data.
+// Scope honesty: counters, breakers and latency observations are
+// PROCESS-LOCAL (single-instance truth); db counts are tenant-scoped to the
+// operator's tenant (isolation law). No secrets, no payloads, no cross-tenant
+// data.
 import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
 import { handleRoute, forbidden } from '@/lib/you/core/errors';
 import { counterSnapshot } from '@/lib/you/core/metrics';
 import { breakerSnapshot } from '@/lib/you/core/circuit-breaker';
 import { deadJobRetentionDays } from '@/lib/you/core/deadletter';
+import { latencySnapshot, sloBreachCounters } from '@/lib/you/core/latency';
 
 export async function GET(request: Request): Promise<Response> {
-  return handleRoute(async () => {
+  // P6.C12: observed under the declared 'api.read' SLO (docs/COST_LATENCY.md).
+  const observedRoute = (fn: () => Promise<Response>) => handleRoute(fn, { request, slo: 'api.read' });
+  return observedRoute(async () => {
     const auth = await requireApiAuth(request);
     if (auth.actorType !== 'user') {
       throw forbidden('metrics require an operator session (api keys are not permitted)');
@@ -44,6 +52,10 @@ export async function GET(request: Request): Promise<Response> {
     const jobs: Record<string, number> = {};
     for (const row of jobsByStatus) jobs[row.status] = row._count._all;
 
+    // P6.C12: merge the SLO breach counters into the counter view (same
+    // canonical key form) + the full latency section with honest labels.
+    const latency = latencySnapshot();
+
     return Response.json(
       {
         scope: {
@@ -52,7 +64,7 @@ export async function GET(request: Request): Promise<Response> {
           countersAndBreakers: 'process-local (single instance) — multi-instance deployments aggregate at the collector',
           jobCounts: 'tenant-scoped database truth',
         },
-        counters: counterSnapshot(),
+        counters: { ...counterSnapshot(), ...sloBreachCounters() },
         breakers: breakerSnapshot(),
         deadJobs: {
           count: deadCount,
@@ -63,6 +75,7 @@ export async function GET(request: Request): Promise<Response> {
           inspection: 'GET /api/v1/maintenance/dead-jobs (list), POST {action:"replay"|"purge"}',
         },
         jobs,
+        latency,
       },
       { headers: { 'cache-control': 'no-store' } },
     );

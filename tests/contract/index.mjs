@@ -42,5 +42,9 @@ import './deficiency-viz.test.mjs';
 // builders + boots/reuses the shared app server; real durable jobs:
 // capture.quality, twin.compile ×2, performance.fromText, render.image)
 import './artifact-completion.test.mjs';
+// P6.C12 cost/latency suite (pure unit over the budget/latency/evidence/cache
+// modules + boots/reuses the shared app server; real broker submits, real
+// lab benchmark runs for the optimization evidence pairs)
+import './lab-cost-latency.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
