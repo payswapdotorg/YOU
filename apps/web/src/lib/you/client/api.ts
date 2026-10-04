@@ -118,6 +118,23 @@ export interface DeadLetterView {
   lastError: string;
 }
 
+/** ── P6.B5 — B4 deficiencies (OPPORTUNISTIC surface) ────────────────────────
+ * GET /api/v1/twins/:id/deficiencies is a PARALLEL lane's deliverable and may
+ * not be deployed; a 404 means "not present" and the UI hides the delta panel
+ * with an honest pending note. The payload is read TOLERANTLY (top-level
+ * array or { deficiencies: [...] }) because B4's contract is frozen
+ * independently of this lane — unrecognized shapes render as unavailable,
+ * never fabricated. */
+export interface DeficiencyRecordView {
+  id?: string;
+  capability?: string;
+  region?: string;
+  status?: string;
+  note?: string;
+  [key: string]: unknown;
+}
+export type DeficienciesPayload = DeficiencyRecordView[] | { deficiencies?: DeficiencyRecordView[]; [key: string]: unknown };
+
 /** GET /api/v1/maintenance/dead-jobs response (operator-gated). */
 export interface DeadJobsView {
   retentionDays: number;
@@ -184,6 +201,9 @@ export const api = {
   // ─── Twins ────────────────────────────────────────────────────────────────
   twins: {
     list: () => call<TwinView[]>('/twins'),
+    /** P6.B5 — B4's route, fetched opportunistically; throws YouApiError
+     * (status 404) when B4 is not deployed — callers degrade honestly. */
+    deficiencies: (id: string) => call<DeficienciesPayload>(`/twins/${id}/deficiencies`),
     create: (body: { displayName: string; personName?: string }, idem?: string) =>
       call<TwinView>('/twins', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     get: (id: string) => call<TwinView & { versions: TwinVersionView[]; captures: CaptureSessionView[] }>(`/twins/${id}`),
@@ -387,13 +407,17 @@ export const api = {
       solutionArtifactId?: string; twinVersionId: string; region?: string;
       verdict: string; note?: string;
     }, idem?: string) => call<FeedbackRequestView>('/feedback', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
-    evidenceRequests: () => call<EvidenceRequestView[]>('/evidence-requests'),
+    evidenceRequests: (opts: { status?: 'open' | 'fulfilled' | 'expired'; capability?: string } = {}) =>
+      call<EvidenceRequestView[]>(`/evidence-requests${qs(opts)}`),
     requestEvidence: (body: {
       twinVersionId?: string; reason: string; capability: string;
       instructions: string; expectedSignal: string; scope?: string;
     }, idem?: string) => call<EvidenceRequestView>('/evidence-requests', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
-    fulfillEvidenceRequest: (id: string, twinId: string, idem?: string) =>
-      call<{ captureSession: CaptureSessionView }>(`/evidence-requests/${id}/fulfill`, { method: 'POST', body: JSON.stringify({ twinId }), idempotencyKey: idem }),
+    fulfillEvidenceRequest: (id: string, twinId: string, opts: { idem?: string; guided?: boolean } = {}) =>
+      call<{ captureSession: CaptureSessionView; evidenceRequest?: EvidenceRequestView; resumed?: boolean }>(
+        `/evidence-requests/${id}/fulfill`,
+        { method: 'POST', body: JSON.stringify({ twinId, guided: opts.guided === true }), idempotencyKey: opts.idem },
+      ),
   },
 
   // ─── Jobs ─────────────────────────────────────────────────────────────────

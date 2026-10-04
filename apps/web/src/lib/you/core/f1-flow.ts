@@ -313,6 +313,103 @@ export function parseF1Protocol(session: { protocol: string | null }): F1Protoco
   return parseJson<F1ProtocolState | null>(session.protocol, null);
 }
 
+// ─── P6.B5 — targeted fulfillment protocol (EvidenceRequest → guided flow) ───
+
+/**
+ * Protocol steps each requested capability focuses. Maps the EvidenceRequest
+ * capability vocabulary onto the F1 8-step protocol honestly: a capability
+ * with NO direct mapping (e.g. teeth) yields an empty list and the caller
+ * falls back to the FULL standard protocol (never a fabricated focus).
+ */
+export const F1_CAPABILITY_STEPS: Record<string, readonly string[]> = {
+  face: ['face-front', 'face-turn'],
+  silhouette: ['upper-body', 'full-body', 'turn-around'],
+  hands: ['hands'],
+  hair: ['turn-around'],
+  motion: ['walking'],
+  speech: ['speech'],
+};
+
+/**
+ * Build a GUIDED F1 protocol prefilled from an EvidenceRequest (P6.B5):
+ * - The capability-mapped steps stay REQUIRED and their PERSISTED instruction
+ *   text gains the request's targeted context (reason/instructions/expected
+ *   signal) — the acceptance-fixture instruction law still holds: what is
+ *   rendered is what is persisted.
+ * - Out-of-scope steps are pre-skipped with an honest reason (required:
+ *   false) — they are disclosed in the manifest/review chain exactly like an
+ *   operator skip, never silently waived. The targeted steps themselves are
+ *   always required (a fulfillment that skips its own target is a disclosed
+ *   reviewer decision, not a default).
+ * - An unmapped capability keeps the FULL standard protocol (steps 1–7
+ *   required, speech optional) — the request context rides the session-level
+ *   instructions and the protocol's `fulfillment` block instead.
+ */
+export function buildF1FulfillmentProtocol(request: {
+  id: string;
+  capability: string;
+  reason: string;
+  instructions: string;
+  expectedSignal: string;
+}): F1ProtocolState {
+  const base = buildF1ProtocolState();
+  const focusedStepIds = [...(F1_CAPABILITY_STEPS[request.capability] ?? [])]
+    .filter((id) => base.steps.some((s) => s.id === id));
+
+  if (focusedStepIds.length === 0) {
+    // honest fallback: no fabricated focus — the full protocol applies
+    return {
+      ...base,
+      currentStepId: base.steps[0]?.id ?? null,
+      fulfillment: {
+        requestId: request.id,
+        capability: request.capability,
+        reason: request.reason,
+        instructions: request.instructions,
+        expectedSignal: request.expectedSignal,
+        focusedStepIds: [],
+      },
+    };
+  }
+
+  const targetedNote = `TARGETED EVIDENCE REQUEST (${request.capability}): ${request.instructions} (expected signal: ${request.expectedSignal})`;
+  const steps = base.steps.map((s) => {
+    if (focusedStepIds.includes(s.id)) {
+      return {
+        ...s,
+        instruction: `${s.instruction} — ${targetedNote}`,
+        required: true, // the request's own target is never optional
+        state: s.step === Math.min(...base.steps.filter((b) => focusedStepIds.includes(b.id)).map((b) => b.step))
+          ? ('current' as const)
+          : ('pending' as const),
+      };
+    }
+    return {
+      ...s,
+      required: false,
+      state: 'skipped' as const,
+      skipReason: `out of scope for this targeted evidence request (capability: ${request.capability}) — waived per the request scope`,
+    };
+  });
+  const currentStepId = steps.find((s) => s.state === 'current')?.id
+    ?? steps.find((s) => s.state === 'pending')?.id
+    ?? null;
+
+  return {
+    ...base,
+    steps,
+    currentStepId,
+    fulfillment: {
+      requestId: request.id,
+      capability: request.capability,
+      reason: request.reason,
+      instructions: request.instructions,
+      expectedSignal: request.expectedSignal,
+      focusedStepIds,
+    },
+  };
+}
+
 // ─── Per-step quality + liveness checkpoint (heuristic, honest) ──────────────
 
 /**

@@ -238,6 +238,10 @@ paths:
     post:
       summary: Maintenance — sweep unreferenced storage objects (durable job)
       responses: {"202": {"description": "Accepted"}, "403": {"description": "Forbidden"}}
+  /maintenance/expire-evidence-requests:
+    post:
+      summary: Maintenance — expire open evidence requests past the TTL (P6.B5; active fulfillment captures are skipped)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}, "403": {"description": "Forbidden"}}
   /maintenance/provider-breaker:
     get:
       summary: Maintenance — provider circuit-breaker state snapshot (operator session)

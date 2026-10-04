@@ -24,7 +24,7 @@ import { api, uid, YouApiError } from '@/lib/you/client/api';
 import type { CaptureSessionView, F1GuidedStep } from '@/lib/you/contracts';
 import {
   Camera, Check, Circle, CircleCheck, Download, FileUp, Loader2, Minus,
-  ScanSearch, ShieldCheck, Trash2, TriangleAlert,
+  ScanSearch, ShieldCheck, Target, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -273,6 +273,29 @@ export function F1CaptureFlow({
           <p role="alert" className="flex items-start gap-2 rounded-md border border-red-500/25 bg-red-500/[0.05] px-3 py-2 text-xs text-red-600 dark:text-red-400">
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {session.error}
           </p>
+        ) : null}
+
+        {/* P6.B5 — targeted fulfillment context (present only when this guided
+            session was opened to fulfill an EvidenceRequest) */}
+        {protocol.fulfillment ? (
+          <div className="space-y-1 rounded-lg border border-primary/25 bg-primary/[0.05] px-4 py-3">
+            <p className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium">
+              <Target className="size-3.5 shrink-0 text-primary" aria-hidden />
+              Targeted evidence request
+              <span className="rounded border bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                {protocol.fulfillment.capability}
+              </span>
+              <span className="you-num text-[11px] font-normal text-muted-foreground">{protocol.fulfillment.requestId.slice(0, 14)}…</span>
+            </p>
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              {protocol.fulfillment.reason} — expected signal: {protocol.fulfillment.expectedSignal}
+            </p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {protocol.fulfillment.focusedStepIds.length > 0
+                ? `${protocol.fulfillment.focusedStepIds.length} protocol step(s) focused below; the other steps were waived as out of scope for this request (disclosed at review).`
+                : 'No direct protocol mapping for this capability — the full standard protocol applies.'}
+            </p>
+          </div>
         ) : null}
 
         <ApiErrorSurface surface={flowErrors} onRetry={() => complete.mutate()} retrying={complete.isPending} />

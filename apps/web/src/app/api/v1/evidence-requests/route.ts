@@ -1,4 +1,5 @@
-// GET  /api/v1/evidence-requests — list (newest first)
+// GET  /api/v1/evidence-requests?status=&capability= — list (newest first;
+// optional exact-match filters, P6.B5)
 // POST /api/v1/evidence-requests — request targeted additional evidence
 import { db } from '@/lib/db';
 import { requireApiAuth } from '@/lib/you/core/auth';
@@ -6,11 +7,25 @@ import { badRequest, handleRoute, notFound, readJsonBody, reqString, optString }
 import { emitEvent } from '@/lib/you/core/events';
 import { evidenceRequestView } from '@/lib/you/core/views';
 
+const STATUS_FILTERS = ['open', 'fulfilled', 'expired'] as const;
+
 export async function GET(request: Request): Promise<Response> {
   return handleRoute(async () => {
     const auth = await requireApiAuth(request);
+    const url = new URL(request.url);
+
+    const status = url.searchParams.get('status')?.trim() || undefined;
+    if (status && !(STATUS_FILTERS as readonly string[]).includes(status)) {
+      throw badRequest(`status filter must be one of ${STATUS_FILTERS.join(' | ')}`);
+    }
+    const capability = url.searchParams.get('capability')?.trim() || undefined;
+
     const requests = await db.evidenceRequest.findMany({
-      where: { tenantId: auth.tenantId },
+      where: {
+        tenantId: auth.tenantId,
+        ...(status ? { status } : {}),
+        ...(capability ? { capability } : {}),
+      },
       orderBy: { createdAt: 'desc' },
     });
     return Response.json(requests.map(evidenceRequestView));

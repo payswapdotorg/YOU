@@ -533,7 +533,17 @@ export function TwinDetail({
 
         {/* ── Improve ───────────────────────────────────────────────────────── */}
         <TabsContent value="improve" className="mt-4">
-          <ImproveTab twinId={twinId} versions={versions} onFulfilled={(session) => { onFocusSession(session.id); onTabChange('capture'); }} />
+          <ImproveTab
+            twinId={twinId}
+            versions={versions}
+            onFulfilled={(session) => { onFocusSession(session.id); onTabChange('capture'); }}
+            onConsentRequired={(hint, missing) => {
+              // P6.B5 — the guided fulfillment shares the F1 consent gate
+              setF1ConsentHint(hint);
+              setF1MissingStatements(missing);
+              setF1ConsentOpen(true);
+            }}
+          />
         </TabsContent>
 
         {/* ── Compare ───────────────────────────────────────────────────────── */}
@@ -616,12 +626,13 @@ function DoneSessionRow({ session, twinId }: { session: CaptureSessionView; twin
   );
 }
 
-function ImproveTab({ twinId, versions, onFulfilled }: {
+function ImproveTab({ twinId, versions, onFulfilled, onConsentRequired }: {
   twinId: string;
   versions: TwinVersionView[];
   onFulfilled: (session: CaptureSessionView) => void;
+  onConsentRequired: (hint: string, missingStatements?: string[]) => void;
 }) {
-  const requestsQ = useQuery({ queryKey: ['evidence-requests'], queryFn: api.artifacts.evidenceRequests });
+  const requestsQ = useQuery({ queryKey: ['evidence-requests'], queryFn: () => api.artifacts.evidenceRequests() });
   const versionIds = useMemo(() => new Set(versions.map((v) => v.id)), [versions]);
 
   if (requestsQ.isPending) return <RowSkeletons rows={3} />;
@@ -659,7 +670,7 @@ function ImproveTab({ twinId, versions, onFulfilled }: {
           </p>
           <div className="grid gap-4 md:grid-cols-2">
             {requests.map((r) => (
-              <EvidenceRequestCard key={r.id} request={r} twinId={twinId} onFulfilled={onFulfilled} />
+              <EvidenceRequestCard key={r.id} request={r} twinId={twinId} onFulfilled={onFulfilled} onConsentRequired={onConsentRequired} />
             ))}
           </div>
         </>

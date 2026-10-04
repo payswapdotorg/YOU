@@ -158,6 +158,29 @@ export async function POST(
     });
     await recordUsage(auth.tenantId, 'job.capture.f1_complete', 1, { captureSessionId: session.id });
 
+    // ── P6.B5 CLOSED LOOP: evidence requests linked to this session flip
+    // open → fulfilled HERE (the guided fulfillment completes with the
+    // capture, not when it starts). Only 'open' requests transition — an
+    // expired request keeps its honest expired status (the TTL window
+    // passed); the session itself and the linkage stay intact either way.
+    const linkedRequests = await db.evidenceRequest.findMany({
+      where: { captureSessionId: session.id, tenantId: auth.tenantId, status: 'open' },
+    });
+    for (const linked of linkedRequests) {
+      await db.evidenceRequest.update({
+        where: { id: linked.id },
+        data: { status: 'fulfilled', captureSessionId: session.id },
+      });
+      await emitEvent(auth.tenantId, 'evidence.request.fulfilled', 'evidence_request', linked.id, {
+        requestId: linked.id,
+        captureSessionId: session.id,
+        twinId: session.twinId,
+        capability: linked.capability,
+        assets: manifest.totals.assets,
+        verified: manifest.totals.verified,
+      });
+    }
+
     const refreshed = await db.captureSession.findUnique({
       where: { id: session.id },
       include: { assets: { orderBy: { createdAt: 'asc' } } },
