@@ -316,6 +316,10 @@ paths:
     post:
       summary: Twins
       responses: {"201": {"description": "Created"}}
+  /twins/{id}/deficiencies:
+    get:
+      summary: Twin deficiency report — per-capability honest states (ok/deficient/unknown) with sources and remedy payloads (P6.B4)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}, "404": {"description": "Not Found"}}
   /twins/{id}:
     get:
       summary: Twins item
