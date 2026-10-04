@@ -79,6 +79,13 @@ import {
 } from '../live/runtime';
 import { executeAgentTool } from './agent-tools';
 import { requireConsent } from '../core/consent';
+// P6.B6 — Solution Artifact manifest v2 section builders (pure core).
+import {
+  bindArtifactId,
+  buildPerformanceSections,
+  buildRenderSections,
+  buildTwinCompileSections,
+} from '../core/artifact-sections';
 import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations } from './benchmark';
@@ -600,9 +607,39 @@ registerExecutor({
     const evidenceCapabilities = [
       ...new Set(analysis.htirDraft.confidence.deficiencies.map((d) => d.capability)),
     ];
+    // P6.B6: the baseline this version compares against — the twin's current
+    // published version before this compile (none on the first compile).
+    const baselineVersionRow = twin.currentVersion > 0
+      ? await db.twinVersion.findFirst({ where: { twinId: twin.id, version: twin.currentVersion } })
+      : null;
+    const provenanceRecord = {
+      ...htir.provenance,
+      inferenceOnly: VLM_RECON_ADAPTER.inferenceOnly,
+      trainingOnBiometrics: VLM_RECON_ADAPTER.trainingOnBiometrics,
+      usage: analysis.usage,
+      deficiencyCount: analysis.htirDraft.confidence.deficiencies.length,
+    };
+    const sections = buildTwinCompileSections({
+      twinId: twin.id,
+      twinVersion: { id: twinVersion.id, version },
+      baselineTwinVersion: baselineVersionRow
+        ? { id: baselineVersionRow.id, version: baselineVersionRow.version }
+        : null,
+      captureSessionId: captureSessionId ?? null,
+      pipeline: { id: pipeline.id, name: pipeline.name },
+      confidence: {
+        overall: htir.confidence.overall,
+        deficiencies: analysis.htirDraft.confidence.deficiencies.length,
+      },
+      evidenceAssetIds: assets.map((a) => a.id),
+      adapterComponents: [{ adapterId: VLM_RECON_ADAPTER.adapterId, version: VLM_RECON_ADAPTER.version }],
+      provenanceKeys: Object.keys(provenanceRecord),
+      consent: { grantIds, scopes: ['reconstruct'], subjectId: twin.subjectId },
+      llmCalls: analysis.usage.llmCalls,
+    });
     const manifest: SolutionArtifactManifest = {
       solutionId: 'pending',
-      version: 1,
+      version: 2,
       type: 'twin-review',
       title: `Twin review — ${twin.displayName} v${version}`,
       inputs: [
@@ -627,13 +664,7 @@ registerExecutor({
         scopes: ['reconstruct'],
         subjectId: twin.subjectId,
       },
-      provenance: {
-        ...htir.provenance,
-        inferenceOnly: VLM_RECON_ADAPTER.inferenceOnly,
-        trainingOnBiometrics: VLM_RECON_ADAPTER.trainingOnBiometrics,
-        usage: analysis.usage,
-        deficiencyCount: analysis.htirDraft.confidence.deficiencies.length,
-      },
+      provenance: provenanceRecord,
       feedback_schema: {
         verdicts: [...FEEDBACK_VERDICTS],
         regions: [...REVIEW_REGIONS],
@@ -645,6 +676,7 @@ registerExecutor({
             : ['face.profile', 'hands', 'hair.back', 'silhouette.side', 'teeth', 'speech'],
       },
       export_targets: ['svg', 'json'],
+      sections,
     };
     const solution = await db.solutionArtifact.create({
       data: {
@@ -655,7 +687,12 @@ registerExecutor({
         twinVersionId: twinVersion.id,
       },
     });
-    const manifestFinal = { ...manifest, solutionId: solution.id };
+    // P6.B6: bind the real artifact id into the apiCode endpoints.
+    const manifestFinal = {
+      ...manifest,
+      solutionId: solution.id,
+      sections: bindArtifactId(sections, solution.id),
+    };
     await db.solutionArtifact.update({
       where: { id: solution.id },
       data: { manifest: JSON.stringify(manifestFinal) },
@@ -972,23 +1009,61 @@ async function loadRenderJob(renderJobId: string, tenantId: string) {
 async function buildRenderReviewSolution(opts: {
   tenantId: string;
   renderJobId: string;
+  twinId: string;
   twinVersionId: string;
   twinVersionVersion: number;
   twinDisplayName: string;
+  /** the render job's performanceId — null for a static render (P6.B6) */
+  performanceId: string | null;
   pipelineId: string | null;
   adapterComponents: { adapterId: string; version: string }[];
   artifacts: { artifactId: string; label: string; kind: string; storageKey: string }[];
   subjectId: string;
   grantIds: string[];
+  /** verbatim job measurements (quoted into the result section, never derived) */
+  latencyMs: number | null;
+  costUsd: number | null;
 }): Promise<string> {
+  // P6.B6: honest lookups for the section slots — the performance actually
+  // driving the render, and the baseline version this render's TwinVersion
+  // compares against (none when it is the twin's first compile).
+  const performanceRow = opts.performanceId
+    ? await db.performance.findFirst({ where: { id: opts.performanceId, tenantId: opts.tenantId } })
+    : null;
+  const baselineVersionRow = opts.twinVersionVersion > 1
+    ? await db.twinVersion.findFirst({ where: { twinId: opts.twinId, version: opts.twinVersionVersion - 1 } })
+    : null;
+  const provenanceRecord = {
+    components: opts.adapterComponents,
+    note: 'render provenance: adapter versions recorded per artifact; deterministic renderer costs 0 USD',
+  };
+  const sections = buildRenderSections({
+    renderJobId: opts.renderJobId,
+    twinVersion: { id: opts.twinVersionId, version: opts.twinVersionVersion },
+    baselineTwinVersion: baselineVersionRow
+      ? { id: baselineVersionRow.id, version: baselineVersionRow.version }
+      : null,
+    performance: performanceRow ? { id: performanceRow.id, name: performanceRow.name } : null,
+    adapterComponents: opts.adapterComponents.map((c) => ({ ...c })),
+    outputArtifact: opts.artifacts[0]
+      ? { artifactId: opts.artifacts[0].artifactId, label: opts.artifacts[0].label, kind: opts.artifacts[0].kind }
+      : null,
+    latencyMs: opts.latencyMs,
+    costUsd: opts.costUsd,
+    provenanceKeys: Object.keys(provenanceRecord),
+    consent: { grantIds: opts.grantIds, scopes: ['render'], subjectId: opts.subjectId },
+  });
   const manifest: SolutionArtifactManifest = {
     solutionId: 'pending',
-    version: 1,
+    version: 2,
     type: 'render-review',
     title: `Render review — ${opts.twinDisplayName} v${opts.twinVersionVersion}`,
-    inputs: [{ label: `Render job ${opts.renderJobId}`, kind: 'renderJob', ref: opts.renderJobId }],
+    inputs: [
+      { label: `Render job ${opts.renderJobId}`, kind: 'renderJob', ref: opts.renderJobId },
+      ...(performanceRow ? [{ label: `Performance ${performanceRow.name}`, kind: 'performance', ref: performanceRow.id }] : []),
+    ],
     twinVersion: { id: opts.twinVersionId, version: opts.twinVersionVersion },
-    performance: null,
+    performance: performanceRow ? { id: performanceRow.id, name: performanceRow.name } : null,
     pipeline: opts.pipelineId ? { id: opts.pipelineId, name: 'see provenance' } : null,
     organization: null,
     artifacts: opts.artifacts.map((a) => ({
@@ -999,13 +1074,11 @@ async function buildRenderReviewSolution(opts: {
     })),
     evidence: [],
     consent: { grantIds: opts.grantIds, scopes: ['render'], subjectId: opts.subjectId },
-    provenance: {
-      components: opts.adapterComponents,
-      note: 'render provenance: adapter versions recorded per artifact; deterministic renderer costs 0 USD',
-    },
+    provenance: provenanceRecord,
     feedback_schema: { verdicts: [...FEEDBACK_VERDICTS], regions: [...REVIEW_REGIONS] },
     evidence_request_schema: { capabilities: [] },
     export_targets: ['svg', 'png'],
+    sections,
   };
   const solution = await db.solutionArtifact.create({
     data: {
@@ -1017,7 +1090,12 @@ async function buildRenderReviewSolution(opts: {
       renderJobId: opts.renderJobId,
     },
   });
-  const final = { ...manifest, solutionId: solution.id };
+  // P6.B6: bind the real artifact id into the apiCode endpoints.
+  const final = {
+    ...manifest,
+    solutionId: solution.id,
+    sections: bindArtifactId(sections, solution.id),
+  };
   await db.solutionArtifact.update({ where: { id: solution.id }, data: { manifest: JSON.stringify(final) } });
   return solution.id;
 }
@@ -1168,9 +1246,11 @@ registerExecutor({
     const solutionId = await buildRenderReviewSolution({
       tenantId: job.tenantId,
       renderJobId: job.id,
+      twinId: job.twinId,
       twinVersionId: job.twinVersionId,
       twinVersionVersion: job.twinVersion.version,
       twinDisplayName: job.twin.displayName,
+      performanceId: job.performanceId,
       pipelineId: job.twinVersion.pipelineId,
       adapterComponents: [
         { adapterId: VLM_RECON_ADAPTER.adapterId, version: VLM_RECON_ADAPTER.version },
@@ -1182,6 +1262,8 @@ registerExecutor({
       artifacts: [{ artifactId, label: `${representationKind} (${style})`, kind: artifactRow.kind, storageKey: artifactRow.storageKey }],
       subjectId: job.twin.subjectId,
       grantIds,
+      latencyMs,
+      costUsd,
     });
     steps.done('artifact');
     await ctx.report({ steps: steps.all(), progress: 1 });
@@ -1462,9 +1544,11 @@ registerExecutor({
     const solutionId = await buildRenderReviewSolution({
       tenantId: job.tenantId,
       renderJobId: job.id,
+      twinId: job.twinId,
       twinVersionId: job.twinVersionId,
       twinVersionVersion: job.twinVersion.version,
       twinDisplayName: job.twin.displayName,
+      performanceId: job.performanceId,
       pipelineId: job.twinVersion.pipelineId,
       adapterComponents: [
         { adapterId: VLM_RECON_ADAPTER.adapterId, version: VLM_RECON_ADAPTER.version },
@@ -1474,6 +1558,8 @@ registerExecutor({
       artifacts: manifestArtifactRefs,
       subjectId: job.twin.subjectId,
       grantIds,
+      latencyMs: result.latencyMs,
+      costUsd: null, // provider cost not observable — modeled estimate lives in artifact meta
     });
     steps.done('artifact');
     await ctx.report({ steps: steps.all(), progress: 1 });
@@ -1554,6 +1640,7 @@ registerExecutor({
       ['tracks', 'Build deterministic state + speech tracks'],
       ['enhance', 'Optional LLM expression tagging'],
       ['persist', 'Persist performance'],
+      ['artifact', 'Create performance-review Solution Artifact'],
     ]);
 
     await ctx.report({ steps: steps.running('parse'), progress: 0.1, status: 'running' });
@@ -1665,6 +1752,71 @@ registerExecutor({
       performanceRow = await db.performance.create({ data });
     }
     steps.done('persist');
+    await ctx.report({ steps: steps.all(), progress: 0.9 });
+
+    // P6.B6 — the performance creation path produces a Solution Artifact with
+    // the sections it can HONESTLY fill: result + performance + provenance +
+    // apiCode. compare/evidence/consent/feedback/evidenceRequests stay
+    // null-with-reason (documented in the section slots, never invented).
+    await ctx.report({ steps: steps.running('artifact'), progress: 0.93 });
+    const performanceProvenance = {
+      origin: 'text',
+      deterministic: true,
+      seed: 'hash(script) ^ 42',
+      sentenceCount: sentences.length,
+      llmEnhanced,
+      ...(llmEnhanced ? {} : { llmEnhanceError: llmError ?? 'deterministic fallback applied' }),
+    };
+    const performanceSections = buildPerformanceSections({
+      performance: { id: performanceRow.id, name },
+      origin: 'text',
+      durationMs,
+      trackCount: tracks.length,
+      sentenceCount: sentences.length,
+      llmEnhanced,
+      twinId: twinId ?? null,
+      provenanceKeys: Object.keys(performanceProvenance),
+    });
+    const performanceManifest: SolutionArtifactManifest = {
+      solutionId: 'pending',
+      version: 2,
+      type: 'performance-review',
+      title: `Performance review — ${name}`,
+      inputs: [{ label: `Performance ${performanceRow.id}`, kind: 'performance', ref: performanceRow.id }],
+      twinVersion: null,
+      performance: { id: performanceRow.id, name },
+      pipeline: null,
+      organization: null,
+      artifacts: [],
+      evidence: [],
+      consent: null,
+      provenance: performanceProvenance,
+      feedback_schema: { verdicts: [...FEEDBACK_VERDICTS], regions: [...REVIEW_REGIONS] },
+      evidence_request_schema: { capabilities: [] },
+      export_targets: ['json'],
+      sections: performanceSections,
+    };
+    const performanceSolution = await db.solutionArtifact.create({
+      data: {
+        tenantId: ctx.tenantId,
+        title: performanceManifest.title,
+        type: 'performance-review',
+        manifest: JSON.stringify(performanceManifest),
+        twinVersionId: null,
+        renderJobId: null,
+      },
+    });
+    await db.solutionArtifact.update({
+      where: { id: performanceSolution.id },
+      data: {
+        manifest: JSON.stringify({
+          ...performanceManifest,
+          solutionId: performanceSolution.id,
+          sections: bindArtifactId(performanceSections, performanceSolution.id),
+        }),
+      },
+    });
+    steps.done('artifact');
     await ctx.report({ steps: steps.all(), progress: 1 });
 
     await emitEvent(ctx.tenantId, 'performance.created', 'performance', performanceRow.id, {
@@ -1673,6 +1825,12 @@ registerExecutor({
       durationMs,
       trackCount: tracks.length,
       llmEnhanced,
+      solutionArtifactId: performanceSolution.id,
+    });
+    await emitEvent(ctx.tenantId, 'solution.artifact.created', 'solution_artifact', performanceSolution.id, {
+      type: 'performance-review',
+      performanceId: performanceRow.id,
+      twinVersionId: null,
     });
     if (llmEnhanced) {
       await recordLlmCalls(ctx.tenantId, 1, { jobKind: 'performance.fromText', performanceId: performanceRow.id });
@@ -1682,13 +1840,17 @@ registerExecutor({
     return {
       output: {
         performanceId: performanceRow.id,
+        solutionArtifactId: performanceSolution.id,
         durationMs,
         tracks: tracks.length,
         sentences: sentences.length,
         llmEnhanced,
         ...(llmEnhanced ? {} : { llmEnhanceError: llmError }),
       },
-      entities: [{ type: 'performance', id: performanceRow.id }],
+      entities: [
+        { type: 'performance', id: performanceRow.id },
+        { type: 'solutionArtifact', id: performanceSolution.id },
+      ],
     };
   },
 });
