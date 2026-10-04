@@ -45,6 +45,7 @@ model Tenant {
   liveSessions   LiveSession[]
   garmentAssets  GarmentAsset[]
   tryOnJobs      TryOnJob[]
+  exportJobs     ExportJob[]
 }
 
 model User {
@@ -230,6 +231,7 @@ model Twin {
   runtimeSessions AgentRuntimeSession[]
   liveSessions    LiveSession[]
   tryOnJobs       TryOnJob[]
+  exportJobs      ExportJob[]
 }
 
 model TwinVersion {
@@ -252,6 +254,7 @@ model TwinVersion {
   evidenceRequests EvidenceRequest[]
   runtimeBodies   AgentRuntimeBody[]
   tryOnJobs       TryOnJob[]
+  exportJobs      ExportJob[]
 
   @@unique([twinId, version])
 }
@@ -844,6 +847,34 @@ model TryOnJob {
   twin         Twin         @relation(fields: [twinId], references: [id])
   twinVersion  TwinVersion  @relation(fields: [twinVersionId], references: [id])
   garmentAsset GarmentAsset @relation(fields: [garmentAssetId], references: [id])
+}
+
+// One game/AR export — a durable `export.glb`/`export.vrm` job row (the
+// TryOnJob pattern, export side; P6.C9). The primary artifact is the
+// GLB/VRM binary (kind 'game-export'); the machine-readable retargeting
+// mapping table (kind 'game-export-mapping') and the structural-vs-derived
+// manifest (kind 'game-export-manifest') land as companion OutputArtifacts
+// referenced from the primary artifact's meta. Reconstruct-scope consent is
+// enforced server-side on the create route and re-verified in the executor.
+model ExportJob {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  twinId               String
+  twinVersionId        String
+  format               String // glb | vrm (upload-validation-style union, route-enforced)
+  lodLevel             Int      @default(0) // 0 (high) | 1 (medium) | 2 (low)
+  includeFacialControls Boolean @default(true)
+  status               String   @default("queued") // queued | running | succeeded | failed
+  jobId                String? // the durable `export.glb`/`export.vrm` Job id (steps/progress polling)
+  artifactId           String? // the primary GLB/VRM OutputArtifact when complete
+  error                String? // verbatim failure (fail-closed geometry refusals included)
+  createdAt            DateTime @default(now())
+  startedAt            DateTime?
+  finishedAt           DateTime?
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  twin        Twin        @relation(fields: [twinId], references: [id])
+  twinVersion TwinVersion @relation(fields: [twinVersionId], references: [id])
 }
 
 // ─── Usage metering ─────────────────────────────────────────────────────────

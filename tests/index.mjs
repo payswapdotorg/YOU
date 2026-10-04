@@ -109,4 +109,21 @@ import './contract/try-on.test.mjs';
 // network beyond 127.0.0.1)
 import './contract/b9-docs-playground.test.mjs';
 
+// P6.C9 game/VRM/GLB export contract suite (imported statically — pure unit
+// over the game-export adapter's zero-import contract core (adapters/
+// game-export.ts), composed exactly as the export.glb/export.vrm executors
+// fold it: GLB binary validity (magic/chunks/alignment/accessor bounds),
+// the you-generic-v1 node+skin hierarchy against the HTIR input, the VRM 0.x
+// extension (humanoid map, blendshape placeholder honesty — zero deltas only
+// for the HTIR articulation set), LOD counts recounted from the REAL emitted
+// glTF JSON, byte-determinism, fail-closed negatives (unknown format, no
+// usable geometry — never a default body), the structural-vs-derived
+// manifest split, the ARKit/Unity/Unreal mapping table with explicit
+// unmapped entries, the honest package manifest, and the route decision
+// folds (validation 400, twin/version 404, consent 403 reconstruct scope,
+// idempotent replay with ORIGINAL ids, GET tenant isolation 404); no app
+// boot, no network, no db)
+import './contract/game-export.test.mjs';
+
 globalThis.__YOU_TEST_AGGREGATED__ = true;
+
