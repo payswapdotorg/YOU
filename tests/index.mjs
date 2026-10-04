@@ -66,5 +66,12 @@ import './contract/f1-operator-flow.test.mjs';
 // event emission with real measured latencies, determinism, and the honest
 // HTTP 4xx/5xx taxonomy; no app boot, no network, no db)
 import './contract/agent-runtime.test.mjs';
+// P6.B5 targeted EvidenceRequest UX suite (imported statically — boots/reuses
+// the shared app server like the P6.B3 suite: guided fulfillment linkage
+// (request → captureSessionId → fulfilled at complete), consent-gate
+// enforcement on the fulfillment capture, expiry sweep with the
+// mid-fulfillment grace, list filtering, tenant isolation; DB seeding only
+// for timestamps + the isolation tenant — no network beyond 127.0.0.1)
+import './contract/evidence-ux.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

@@ -307,12 +307,29 @@ export interface F1GuidedStep {
   submittedAt?: string;
 }
 
+/**
+ * P6.B5 — targeted fulfillment context: present when this guided session was
+ * opened to fulfill an EvidenceRequest. `focusedStepIds` is EMPTY when the
+ * requested capability had no direct protocol-step mapping — then the full
+ * standard protocol applies (honest fallback, never a fabricated focus).
+ */
+export interface F1FulfillmentContext {
+  requestId: string;
+  capability: string;
+  reason: string;
+  instructions: string;
+  expectedSignal: string;
+  focusedStepIds: string[];
+}
+
 /** The persisted protocol document on a guided capture session. */
 export interface F1ProtocolState {
   version: 'f1-operator-capture/v1';
   source: 'docs/F1_OPERATOR_CAPTURE.md';
   steps: F1GuidedStep[];
   currentStepId: string | null;
+  /** P6.B5 — set only on sessions opened via a guided evidence-request fulfillment */
+  fulfillment?: F1FulfillmentContext;
 }
 
 /**

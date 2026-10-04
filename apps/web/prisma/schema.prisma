@@ -398,7 +398,7 @@ model EvidenceRequest {
   id               String   @id @default(cuid())
   tenantId         String
   twinVersionId    String?
-  captureSessionId String? // prefilled capture session once fulfilled
+  captureSessionId String? // linked fulfillment capture (set when a guided fulfillment starts; status flips to fulfilled at complete — P6.B5)
   reason           String
   capability       String // face | hair | hands | silhouette | motion | speech | teeth …
   instructions     String

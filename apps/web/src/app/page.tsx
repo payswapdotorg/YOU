@@ -10,7 +10,7 @@ import { useTheme } from 'next-themes';
 import {
   LayoutGrid, UserRound, Camera, Drama, LayoutTemplate, ImageIcon, Radio,
   Bot, KeyRound, FlaskConical, ShieldCheck, CreditCard, Settings, Search,
-  Menu, Moon, Sun, Plus, ChevronRight, Activity,
+  Menu, Moon, Sun, Plus, ChevronRight, Activity, Target,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -24,6 +24,7 @@ import { ViewErrorBoundary } from '@/components/you/shared/view-error-boundary';
 import { OverviewView } from '@/components/you/views/overview';
 import { TwinsView } from '@/components/you/views/twins';
 import { CapturesView } from '@/components/you/views/captures';
+import { EvidenceRequestsView } from '@/components/you/views/evidence-requests';
 import { PerformancesView } from '@/components/you/views/performances';
 import { TemplatesView } from '@/components/you/views/templates';
 import { RendersView } from '@/components/you/views/renders';
@@ -43,6 +44,7 @@ const NAV: { section?: string; items: { id: ViewId; label: string; icon: typeof 
     items: [
       { id: 'twins', label: 'Twins', icon: UserRound },
       { id: 'captures', label: 'Captures', icon: Camera },
+      { id: 'evidence-requests', label: 'Evidence Requests', icon: Target },
       { id: 'performances', label: 'Performances', icon: Drama },
       { id: 'templates', label: 'Templates', icon: LayoutTemplate },
       { id: 'renders', label: 'Renders', icon: ImageIcon },
@@ -68,7 +70,8 @@ const NAV: { section?: string; items: { id: ViewId; label: string; icon: typeof 
 ];
 
 const VIEW_TITLES: Record<ViewId, string> = {
-  overview: 'Overview', twins: 'Twins', captures: 'Captures', performances: 'Performances',
+  overview: 'Overview', twins: 'Twins', captures: 'Captures', 'evidence-requests': 'Evidence Requests',
+  performances: 'Performances',
   templates: 'Templates', renders: 'Renders', live: 'Live', 'agent-avatars': 'Agent Avatars',
   develop: 'API & Tools', labs: 'Labs', trust: 'Consent & Provenance', usage: 'Usage & Billing',
   settings: 'Settings', artifact: 'Solution Artifact',
@@ -76,7 +79,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
 
 const VIEWS: Record<ViewId, React.ComponentType> = {
   overview: OverviewView, twins: TwinsView, captures: CapturesView,
-  performances: PerformancesView, templates: TemplatesView, renders: RendersView,
+  'evidence-requests': EvidenceRequestsView, performances: PerformancesView, templates: TemplatesView, renders: RendersView,
   live: LiveView, 'agent-avatars': AgentAvatarsView, develop: DevelopView,
   labs: LabsView, trust: TrustView, usage: UsageView, settings: SettingsView,
   artifact: ArtifactView,
