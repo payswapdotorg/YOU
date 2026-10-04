@@ -25,8 +25,22 @@ import type {
   AgentRuntimeSoulView,
   AgentRuntimeTurnView,
 } from '../agent/runtime-core';
+// P6.B4 — deficiency report/delta view types (lane-owned by
+// lib/you/core/deficiency.ts — pure module; this type-only import is fully
+// erased at compile time, so no aggregation code reaches the client bundle;
+// the pure half IS unit-tested server-side in tests/contract).
+import type { DeficiencyDelta, DeficiencyReport } from '../core/deficiency';
 
 const BASE = '/api/v1';
+
+/** GET /api/v1/twins/:id/deficiencies envelope (P6.B4).
+ * `baselineReport` + `delta` are present only when `baselineVersionId` was
+ * requested — honest absence otherwise (never a fabricated delta). */
+export interface DeficiencyReportEnvelope {
+  report: DeficiencyReport;
+  baselineReport?: DeficiencyReport;
+  delta?: DeficiencyDelta;
+}
 
 async function call<T>(path: string, init?: RequestInit & { idempotencyKey?: string }): Promise<T> {
   const headers: Record<string, string> = {};
@@ -191,6 +205,9 @@ export const api = {
     compile: (id: string, body: { captureSessionId?: string; style?: RenderStyle } = {}, idem?: string) =>
       call<{ jobId: string }>(`/twins/${id}/compile`, { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     remove: (id: string) => call<void>(`/twins/${id}`, { method: 'DELETE' }),
+    // P6.B4 — honest quality-deficiency report (+ optional version delta)
+    deficiencies: (id: string, params?: { versionId?: string; baselineVersionId?: string }) =>
+      call<DeficiencyReportEnvelope>(`/twins/${id}/deficiencies${qs({ versionId: params?.versionId, baselineVersionId: params?.baselineVersionId })}`),
   },
 
   // ─── Captures / evidence ─────────────────────────────────────────────────

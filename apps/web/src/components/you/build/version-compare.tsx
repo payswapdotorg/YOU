@@ -2,12 +2,24 @@
 // Version compare — side-by-side confidence and deficiency diff between two
 // TwinVersions of the same twin. Honest single-version note: comparing needs
 // at least two immutable versions.
+// P6.B4: adds the DEFICIENCY DELTA section — per-capability improved /
+// regressed / unchanged / unknown between the two versions' deficiency
+// reports (GET /twins/:id/deficiencies?versionId=&baselineVersionId=).
+// Deltas involving `unknown` on either side are shown as unknown — never
+// guessed as improvements or regressions.
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { IdChip } from '@/components/you/shared/primitives';
+import { api } from '@/lib/you/client/api';
+import type { DeficiencyDelta, DeficiencyDeltaKind } from '@/lib/you/core/deficiency';
 import type { TwinVersionView } from '@/lib/you/contracts';
-import { ArrowRight, GitCompareArrows, Minus, Plus } from 'lucide-react';
+import {
+  ArrowRight, GitCompareArrows, Minus, Plus, TrendingUp, TrendingDown, CircleHelp, Equal,
+} from 'lucide-react';
 import { CompareBar } from './confidence';
+import { QueryError, RowSkeletons } from './confidence';
 import { timeAbs } from './format';
 import { cn } from '@/lib/utils';
 
@@ -35,7 +47,95 @@ function VersionPicker({
   );
 }
 
-export function VersionCompare({ versions }: { versions: TwinVersionView[] }) {
+const DELTA_STYLES: Record<DeficiencyDeltaKind, string> = {
+  improved: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/25',
+  regressed: 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/25',
+  unchanged: 'bg-zinc-500/12 text-zinc-600 dark:text-zinc-400 border-zinc-500/25',
+  unknown: 'bg-amber-500/12 text-amber-700 dark:text-amber-400 border-amber-500/25',
+};
+
+function DeltaBadge({ delta }: { delta: DeficiencyDeltaKind }) {
+  const Icon = delta === 'improved' ? TrendingUp : delta === 'regressed' ? TrendingDown : delta === 'unchanged' ? Equal : CircleHelp;
+  return (
+    <Badge variant="outline" className={cn('you-num gap-1', DELTA_STYLES[delta])}>
+      <Icon className="size-3" aria-hidden />
+      {delta}
+    </Badge>
+  );
+}
+
+function stateLabel(state: string, severity: string | null): string {
+  if (state === 'deficient') return `deficient (${severity ?? 'low'})`;
+  return state;
+}
+
+/** P6.B4 — the honest per-capability deficiency delta between two versions. */
+function DeficiencyDeltaSection({ twinId, a, b }: { twinId: string; a: TwinVersionView; b: TwinVersionView }) {
+  const deltaQ = useQuery({
+    queryKey: ['twin-deficiency-delta', twinId, a.id, b.id],
+    queryFn: () => api.twins.deficiencies(twinId, { versionId: b.id, baselineVersionId: a.id }),
+    enabled: a.id !== b.id,
+  });
+
+  if (a.id === b.id) return null;
+
+  let body: React.ReactNode;
+  if (deltaQ.isPending) {
+    body = <RowSkeletons rows={4} />;
+  } else if (deltaQ.isError || !deltaQ.data?.delta) {
+    body = (
+      <QueryError
+        error={deltaQ.error ?? new Error('the deficiency delta was not returned for these versions')}
+        title="Could not load the deficiency delta"
+        onRetry={() => void deltaQ.refetch()}
+        compact
+      />
+    );
+  } else {
+    const delta: DeficiencyDelta = deltaQ.data.delta;
+    body = (
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="delta summary">
+          <Badge variant="outline" className="you-num gap-1 border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"><TrendingUp className="size-3" aria-hidden /> {delta.summary.improved} improved</Badge>
+          <Badge variant="outline" className="you-num gap-1 border-red-500/25 bg-red-500/12 text-red-700 dark:text-red-400"><TrendingDown className="size-3" aria-hidden /> {delta.summary.regressed} regressed</Badge>
+          <Badge variant="outline" className="you-num gap-1 border-zinc-500/25 bg-zinc-500/12 text-zinc-600 dark:text-zinc-400"><Equal className="size-3" aria-hidden /> {delta.summary.unchanged} unchanged</Badge>
+          <Badge variant="outline" className="you-num gap-1 border-amber-500/25 bg-amber-500/12 text-amber-700 dark:text-amber-400"><CircleHelp className="size-3" aria-hidden /> {delta.summary.unknown} unknown</Badge>
+        </div>
+        <ul className="max-h-96 space-y-1.5 overflow-y-auto you-scroll pr-1" aria-label="capability delta rows">
+          {delta.rows.map((r) => (
+            <li key={r.capability} className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{r.label}</span>
+                <DeltaBadge delta={r.delta} />
+                <span className="you-num ml-auto text-[10.5px] text-muted-foreground">
+                  {stateLabel(r.from.state, r.from.severity)} → {stateLabel(r.to.state, r.to.severity)}
+                </span>
+              </div>
+              <p className="mt-0.5 leading-snug text-muted-foreground">{r.reason}</p>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[10.5px] text-muted-foreground">
+          Baseline v{delta.baseline.twinVersionNumber} → comparison v{delta.comparison.twinVersionNumber}.
+          Deltas are computed only from the two versions&apos; persisted deficiency reports; transitions involving
+          an unknown state stay unknown — never guessed.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <h4 className="flex items-center gap-1.5 text-[13px] font-semibold">
+        <GitCompareArrows className="size-3.5 text-muted-foreground" aria-hidden /> Deficiency delta
+        <span className="you-num ml-auto text-xs font-normal text-muted-foreground">P6.B4 capability map</span>
+      </h4>
+      <div className="mt-3">{body}</div>
+    </div>
+  );
+}
+
+export function VersionCompare({ twinId, versions }: { twinId: string; versions: TwinVersionView[] }) {
   const sorted = useMemo(() => [...versions].sort((a, b) => b.version - a.version), [versions]);
   const [aId, setAId] = useState<string>('');
   const [bId, setBId] = useState<string>('');
@@ -121,6 +221,9 @@ export function VersionCompare({ versions }: { versions: TwinVersionView[] }) {
               Left bar = baseline, right bar = comparison. Bars only show backend-reported confidence — never estimated.
             </p>
           </div>
+
+          {/* P6.B4 — per-capability deficiency delta between the two versions */}
+          <DeficiencyDeltaSection twinId={twinId} a={a} b={b} />
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="rounded-xl border bg-card p-4">
