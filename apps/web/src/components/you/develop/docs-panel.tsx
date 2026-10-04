@@ -5,11 +5,12 @@
 // syntax-highlighter. Includes a copy-paste Playground recipe.
 // ═══════════════════════════════════════════════════════════════════════════
 import { useState } from 'react';
-import { BookOpen, ChevronDown, Terminal } from 'lucide-react';
+import { BookOpen, ChevronDown, Compass, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SectionCard } from '@/components/you/shared/primitives';
 import { CodeBlock } from '@/components/you/artifact/copy-button';
+import { TOUR_RESTART_EVENT } from '@/components/you/develop/onboarding-tour';
 import { cn } from '@/lib/utils';
 
 type Method = 'GET' | 'POST' | 'DELETE';
@@ -324,6 +325,15 @@ export function DocsPanel() {
         title="API reference"
         description="The same application services behind the Studio UI — HTTP, SDK, MCP and UI share one authority (ARCHITECTURE §12)."
         icon={BookOpen}
+        actions={
+          <Button
+            variant="outline" size="sm" className="gap-1.5"
+            onClick={() => window.dispatchEvent(new CustomEvent(TOUR_RESTART_EVENT))}
+            title="Replay the first-run walkthrough of the primary flow"
+          >
+            <Compass className="size-3.5" aria-hidden /> Restart tour
+          </Button>
+        }
       >
         <CodeBlock code={BASE_NOTE} className="mb-4" />
         <p className="mb-4 text-xs text-muted-foreground">
