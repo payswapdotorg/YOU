@@ -20,6 +20,7 @@ import { useYouStore, type ViewId } from '@/hooks/you/use-you-store';
 import { api } from '@/lib/you/client/api';
 import { Toaster } from '@/components/ui/sonner';
 import { ViewErrorBoundary } from '@/components/you/shared/view-error-boundary';
+import { OnboardingTour } from '@/components/you/develop/onboarding-tour';
 
 import { OverviewView } from '@/components/you/views/overview';
 import { TwinsView } from '@/components/you/views/twins';
@@ -310,6 +311,11 @@ function Shell() {
       </div>
 
       <CommandPalette />
+
+      {/* P6.B9 — first-run guided walkthrough of the primary flow
+          (Build → capture → review → compile → render → artifact → Develop).
+          Dismissible, persisted per user, every stop links to a real view. */}
+      <OnboardingTour />
     </div>
   );
 }

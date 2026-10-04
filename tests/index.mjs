@@ -85,5 +85,12 @@ import './contract/live-sessions.test.mjs';
 // transition table, fail-closed provider status, soul provider config
 // validation, tenant isolation; no app boot, no network, no db)
 import './contract/avatar-ux.test.mjs';
+// P6.B9 docs/playground/onboarding suite (imported statically — pure unit
+// over the frozen-inventory playground ops + sandbox resolution + examples
+// compile-mirror + onboarding persistence; API level boots/reuses the shared
+// app server like the B3/B5/B7 suites: mutation-confirmation enforcement,
+// honest sandbox refusal, set-cookie never rendering, tenant isolation; no
+// network beyond 127.0.0.1)
+import './contract/b9-docs-playground.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
