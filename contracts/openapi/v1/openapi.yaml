@@ -265,6 +265,28 @@ paths:
     post:
       summary: Interrupt a running agent session turn (honest interrupted state; P6.B7)
       responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}, "401": {"description": "Unauthorized"}}
+  /try-on:
+    get:
+      summary: Virtual try-on — list try-on jobs (consent-enforced; P6.C8)
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Virtual try-on — create try-on render (durable tryon.render job, idempotent; P6.C8)
+      responses: {"202": {"description": "Accepted"}, "400": {"description": "Bad Request"}, "403": {"description": "Forbidden"}, "409": {"description": "Conflict"}, "401": {"description": "Unauthorized"}}
+  /try-on/{id}:
+    get:
+      summary: Virtual try-on — job detail + comparison artifact with signed URLs (P6.C8)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /try-on/garments:
+    get:
+      summary: Try-on garments — list garment assets (P6.C8)
+      responses: {"200": {"description": "OK"}}
+    post:
+      summary: Try-on garments — multipart garment upload (content-addressed, merchant provenance; P6.C8)
+      responses: {"201": {"description": "Created"}, "400": {"description": "Bad Request"}, "413": {"description": "Payload Too Large"}, "429": {"description": "Too Many Requests"}, "401": {"description": "Unauthorized"}}
+  /try-on/garments/{id}:
+    get:
+      summary: Try-on garments — garment detail (P6.C8)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
   /maintenance/dead-jobs:
     get:
       summary: Maintenance — list dead-lettered jobs (operator session)
