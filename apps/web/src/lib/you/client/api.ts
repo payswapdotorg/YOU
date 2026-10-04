@@ -30,6 +30,15 @@ import type {
 // erased at compile time, so no aggregation code reaches the client bundle;
 // the pure half IS unit-tested server-side in tests/contract).
 import type { DeficiencyDelta, DeficiencyReport } from '../core/deficiency';
+// P6.C7 — Live session view types (lane-owned by lib/you/live/live-core, the
+// runtime-core precedent: type-only import keeps the client drift-free
+// against the server's view shapes and is fully erased at compile time —
+// no node builtin (the HMAC seam) reaches the browser bundle).
+import type {
+  LiveSessionSummaryView,
+  LiveSessionView,
+  LiveSignalingPollView,
+} from '../live/live-core';
 
 const BASE = '/api/v1';
 
@@ -384,6 +393,54 @@ export const api = {
       call<{ jobId: string; turn: AgentRuntimeTurnView; replayed?: boolean }>(
         `/agent/sessions/${id}/turns`, { method: 'POST', body: JSON.stringify({ message }), idempotencyKey: idem }),
     endSession: (id: string) => call<void>(`/agent/sessions/${id}`, { method: 'DELETE' }),
+  },
+
+  // ─── Live sessions — realtime performance / WebRTC path (P6.C7) ──────
+  // Live sessions are the LOW-LATENCY surface, fully separate from the
+  // offline rendering loop. Create is consent-enforced server-side and
+  // mints a short-lived signaling token; signal exchange is HTTP polling
+  // in v1 (documented); state events are idempotent (x-idempotency-key).
+  live: {
+    sessions: () => call<LiveSessionSummaryView[]>('/live-sessions'),
+    create: (body: { twinId?: string; agentSessionId?: string; consentGrantId?: string }, idem?: string) =>
+      call<{
+        session: LiveSessionView;
+        signalingToken: string;
+        tokenExpiresAt: string;
+      }>('/live-sessions', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    get: (id: string) => call<LiveSessionView>(`/live-sessions/${id}`),
+    // POST one SDP offer/answer or ICE candidate (requires the token).
+    signal: (
+      id: string,
+      body: { kind: 'offer' | 'answer'; from: 'initiator' | 'responder'; sdp: string } | { kind: 'candidate'; from: 'initiator' | 'responder'; candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null },
+      signalingToken: string,
+    ) =>
+      call<{ phase: string; status: string; seq: number | null }>(`/live-sessions/${id}/signal`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'x-signaling-token': signalingToken },
+      }),
+    // v1 transport: poll the relayed signaling state (documented honest limit).
+    pollSignal: (id: string, since?: number) =>
+      call<LiveSignalingPollView>(`/live-sessions/${id}/signal${qs({ since })}`),
+    // POST one live state event (idempotent with x-idempotency-key; token).
+    submitState: (
+      id: string,
+      body:
+        | { kind: 'connection'; connectionState: 'connecting' | 'connected' | 'failed' | 'closed' }
+        | { kind: 'performance'; delta: { gaze?: { x: number; y: number }; expression?: string; speech?: string; intensity?: number } }
+        | { kind: 'agent'; agentState: string },
+      signalingToken: string,
+      idem?: string,
+    ) =>
+      call<{ eventId: string; duplicate: boolean; status: string; phase: string; currentAgentState: string | null }>(
+        `/live-sessions/${id}/state`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: { 'x-signaling-token': signalingToken },
+          idempotencyKey: idem,
+        }),
+    end: (id: string) => call<void>(`/live-sessions/${id}/end`, { method: 'POST', body: '{}' }),
   },
 
   // ─── Lab ──────────────────────────────────────────────────────────────────
