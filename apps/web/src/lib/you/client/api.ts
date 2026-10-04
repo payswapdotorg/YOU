@@ -25,6 +25,10 @@ import type {
   AgentRuntimeSoulView,
   AgentRuntimeTurnView,
 } from '../agent/runtime-core';
+// P6.B7 — Soul provider status rows (lane-owned by lib/you/agent/
+// soul-providers, type-only import keeps the client drift-free against the
+// server's provider surface; fully erased at compile time).
+import type { SoulProviderStatusRow } from '../agent/soul-providers';
 
 const BASE = '/api/v1';
 
@@ -370,6 +374,11 @@ export const api = {
       call<{ jobId: string; turn: AgentRuntimeTurnView; replayed?: boolean }>(
         `/agent/sessions/${id}/turns`, { method: 'POST', body: JSON.stringify({ message }), idempotencyKey: idem }),
     endSession: (id: string) => call<void>(`/agent/sessions/${id}`, { method: 'DELETE' }),
+    // P6.B7 — Soul provider wiring + user interrupt of an in-flight turn.
+    providers: () => call<SoulProviderStatusRow[]>('/agent/providers'),
+    interruptTurn: (id: string, idem?: string) =>
+      call<{ jobId: string; effective: boolean; note: string }>(
+        `/agent/sessions/${id}/interrupt`, { method: 'POST', body: '{}', idempotencyKey: idem }),
   },
 
   // ─── Lab ──────────────────────────────────────────────────────────────────

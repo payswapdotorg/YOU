@@ -73,5 +73,15 @@ import './contract/agent-runtime.test.mjs';
 // mid-fulfillment grace, list filtering, tenant isolation; DB seeding only
 // for timestamps + the isolation tenant — no network beyond 127.0.0.1)
 import './contract/evidence-ux.test.mjs';
+// P6.B7 avatar/embodiment UX suite (imported statically — PURE unit half:
+// the embodiment transition table + derivation lifecycle, provider status
+// resolution (fail-closed, env-injected), soul provider config validation,
+// the engine's onPhase transparency seam; API half boots/reuses the shared
+// app server like the P6.B5 suite: the provider registry surface, soul
+// provider wiring 400s, interrupt semantics on seeded in-flight turn jobs
+// (queued → effective cancel; running → durable request), and tenant
+// isolation; DB seeding only for the in-flight job rows + the isolation
+// tenant — no network beyond 127.0.0.1)
+import './contract/avatar-ux.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

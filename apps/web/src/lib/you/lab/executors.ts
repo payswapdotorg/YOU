@@ -2071,6 +2071,25 @@ const agentTurnExecutor = {
         executeTool: (toolCtx, call) => executeAgentTool(toolCtx, call),
         now: () => Date.now(),
         uuid: () => crypto.randomUUID(),
+        // P6.B7 turn transparency: the engine's phase boundaries re-report
+        // the running `reply` step with an honest detail — "waiting on model"
+        // vs "tool round N" — which the session/turns join surfaces so the
+        // avatar stage can show WHY it is in its current state. Best-effort by
+        // design: a failed transparency report never fails the turn.
+        onPhase: (phase) => {
+          let detail: string;
+          let progress: number;
+          if (phase.phase === 'model') {
+            detail = phase.call === 'draft'
+              ? 'waiting on model — drafting the reply'
+              : `waiting on model — follow-up after tool round ${phase.round}`;
+            progress = phase.call === 'draft' ? 0.35 : 0.6;
+          } else {
+            detail = `tool round ${phase.round}: ${phase.tool}${phase.executed ? '' : ' (refused — not executed)'}`;
+            progress = 0.5;
+          }
+          ctx.report({ steps: steps.running('reply', detail), progress }).catch(() => undefined);
+        },
       },
       {
         tenantId: ctx.tenantId,
