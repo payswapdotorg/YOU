@@ -82,7 +82,8 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'hand-designed', label: 'Run hand-designed baseline' },
     { key: 'searched', label: 'Run searched pipeline' },
     { key: 'evaluate', label: 'Evaluate organizations' },
-    { key: 'failures', label: 'Record failure cases' },
+    { key: 'manifest', label: 'Build the write-once run manifest (P6.C11)' },
+    { key: 'failures', label: 'Record failure cases (taxonomy v1 codes)' },
     { key: 'promote', label: 'Promote draft pipeline' },
   ],
   // W2.A — async durable analyze job for POST /templates/:id/analyze

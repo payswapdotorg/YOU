@@ -221,8 +221,8 @@ export interface GroundingCallResult {
   error: string | null;
 }
 
-/** ONE real, small provider call to anchor latency honestly. */
-async function groundingCall(): Promise<GroundingCallResult> {
+/** ONE real, small provider call to anchor latency honestly (P6.C11: exported — the lab.benchmark executor reuses it for the soul-swap scenario). */
+export async function groundingCall(): Promise<GroundingCallResult> {
   try {
     const res = await chatComplete(
       [{ role: 'user', content: 'Reply with the single word: ok' }],

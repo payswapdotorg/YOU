@@ -42,5 +42,14 @@ import './deficiency-viz.test.mjs';
 // builders + boots/reuses the shared app server; real durable jobs:
 // capture.quality, twin.compile ×2, performance.fromText, render.image)
 import './artifact-completion.test.mjs';
+// P6.C11 lab benchmark artifacts + Failure Atlas contract suite (pure unit
+// over the C11 zero-import contract cores — lab/run-manifest.ts +
+// lab/failure-codes.ts + lab/soul-swap.ts, composed with the real seeded
+// world + compiled organizations exactly as the lab.benchmark executor folds
+// them: write-once run manifests, run comparison + regression detection,
+// the failure-code taxonomy + atlas aggregation, the remediation lifecycle,
+// policy-decision honesty, the deterministic soul-swap scenario, and the
+// content-addressed artifact export; no app boot, no network, no db)
+import './lab-benchmark-atlas.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

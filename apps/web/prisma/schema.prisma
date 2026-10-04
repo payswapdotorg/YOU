@@ -548,12 +548,16 @@ model BenchmarkRun {
   status       String    @default("queued")
   organizations String   @default("[]") // JSON: org descriptors
   metrics      String? // JSON: aggregate comparison
+  manifest     String    @default("{}") // JSON: write-once run manifest (P6.C11) — terminal runs are never mutated; re-runs are new rows
+  rerunOfId    String? // P6.C11: this run re-ran the referenced run (parent)
   startedAt    DateTime?
   finishedAt   DateTime?
   createdAt    DateTime  @default(now())
 
   reports   EvaluationReport[]
   failures  FailureCase[]
+  rerunOf   BenchmarkRun?  @relation("BenchmarkReruns", fields: [rerunOfId], references: [id])
+  reruns    BenchmarkRun[] @relation("BenchmarkReruns")
 }
 
 model EvaluationReport {
@@ -573,13 +577,18 @@ model FailureCase {
   id                 String   @id @default(cuid())
   benchmarkRunId     String?
   organizationId     String?
+  code               String   @default("UNCLASSIFIED") // P6.C11: failure-code taxonomy v1 (region/stage/provider/policy classes)
   inputConditions    String   @default("{}") // JSON
+  payload            String   @default("{}") // JSON: structured payload per the taxonomy code
   pipeline           String   @default("{}") // JSON
   technologyVersions String   @default("[]") // JSON
   artifacts          String   @default("[]") // JSON refs
   suspectedCause     String
   confidence         Float    @default(0.5)
   remediation        String?
+  status             String   @default("open") // P6.C11 lifecycle: open | mitigated | verified
+  remediationLog     String   @default("[]") // JSON: audit entries (who/when/evidence) per transition
+  policyDecision     String   @default("{}") // JSON: recorded policy decisions (enforced vs proposed, with basis)
   createdAt          DateTime @default(now())
 
   benchmarkRun BenchmarkRun? @relation(fields: [benchmarkRunId], references: [id])

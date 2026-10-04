@@ -11,8 +11,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import type { PrismaClient } from '@prisma/client';
 import type { AgentSoulView, PipelineGenome } from '../contracts';
-import { TECHNOLOGY_CATALOG } from './technology-catalog';
-import { mutateGenome } from './genome';
+// NOTE: relative imports carry explicit .ts extensions (the ai/render-provider.ts
+// precedent) so node:test's type-stripping resolver can load this module chain
+// directly — the extensionless bundler specifiers are not resolvable under
+// plain Node ESM.
+import { TECHNOLOGY_CATALOG } from './technology-catalog.ts';
+import { mutateGenome } from './genome.ts';
 
 export interface SoulCatalogEntry {
   soulKey: string;
@@ -204,6 +208,39 @@ export async function seedLabBaseline(prisma: unknown, opts: SeedOptions = {}): 
         cost: 'real provider costs recorded where measurable; modeled costs explicitly labeled',
         latency: 'real provider latencies recorded per call; modeled latencies explicitly labeled',
       }),
+    },
+  });
+
+  // ─── Lab objective SOUL-SWAP-001 (P6.C11 — identity preservation) ─────────
+  await db.labObjective.upsert({
+    where: { code: 'SOUL-SWAP-001' },
+    create: {
+      code: 'SOUL-SWAP-001',
+      title: 'Identity preservation across soul swaps',
+      description:
+        'Soul swap benchmark: bodies are swappable infrastructure (ADR-0002) — measure per-organization continuity, drift and post-swap capability retention when souls are rebound across bodies, with one real provider grounding call per organization',
+      target: JSON.stringify({
+        scenario: 'soul-swap-001',
+        stages: ['compile-organizations', 'soul-swap', 'evaluate-identity-preservation', 'failure-atlas', 'promotion-candidate'],
+        metrics: ['continuity', 'drift', 'capabilityRetention', 'latencyMs', 'costUsd', 'determinism'],
+        successCriteria: {
+          note: 'quantitative targets are set by the benchmark harness per world seed; capability-loss and drift failure cases are recorded when thresholds are breached',
+        },
+      }),
+      gates: JSON.stringify({
+        reproducibility: 'deterministic re-run of the same seed must reproduce identical swap metrics',
+        benchmark: 'generalist, hand-designed and searched organizations all evaluated on the same seeded world under the same swap policy',
+        rights: 'souls and bodies carry their ADR-0002 registry records; research-only never promotes past research',
+        privacy: 'simulated worlds only — no production human identity data',
+        cost: 'real provider costs recorded where measurable; modeled costs explicitly labeled',
+        latency: 'real provider latencies recorded per call; modeled latencies explicitly labeled',
+      }),
+      status: 'active',
+    },
+    update: {
+      title: 'Identity preservation across soul swaps',
+      description:
+        'Soul swap benchmark: bodies are swappable infrastructure (ADR-0002) — measure per-organization continuity, drift and post-swap capability retention when souls are rebound across bodies, with one real provider grounding call per organization',
     },
   });
 

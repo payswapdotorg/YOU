@@ -659,6 +659,10 @@ export interface BenchmarkRunView {
   status: 'queued' | 'running' | 'succeeded' | 'failed';
   organizations: OrganizationDescriptor[];
   metrics?: Record<string, unknown> | null;
+  /** P6.C11: the write-once run manifest (null when the run predates manifests). */
+  manifest?: Record<string, unknown> | null;
+  /** P6.C11: this run re-ran the referenced run (its parent). */
+  rerunOfId?: string | null;
   reports: EvaluationReportView[];
   createdAt: string;
 }
@@ -667,11 +671,120 @@ export interface FailureCaseView {
   id: string;
   benchmarkRunId?: string | null;
   organizationId?: string | null;
+  /** P6.C11: failure-code taxonomy v1 (region/stage/provider/policy classes). */
+  code: string;
   inputConditions: Record<string, unknown>;
+  /** structured payload per the taxonomy code. */
+  payload: Record<string, unknown>;
   suspectedCause: string;
   confidence: number;
   remediation?: string | null;
+  /** P6.C11 lifecycle: open | mitigated | verified. */
+  status: 'open' | 'mitigated' | 'verified';
+  /** audit entries (who/when/evidence) per remediation transition. */
+  remediationLog: Array<{
+    action: 'mitigate' | 'verify';
+    from: string;
+    to: string;
+    actorType: 'user' | 'application';
+    actorId: string;
+    tenantId: string;
+    evidence: string;
+    note?: string;
+    at: string;
+  }>;
+  /** recorded policy decisions for the case's class (enforced vs proposed, with basis). */
+  policyDecision: {
+    taxonomyVersion: number;
+    decisions: Array<{
+      code: string;
+      action: 'retry' | 'fallback' | 'quarantine' | 'escalate';
+      status: 'enforced' | 'proposed';
+      basis: string;
+    }>;
+  };
   createdAt: string;
+}
+
+// ─── P6.C11: run comparison + regression detection (machine-readable verdict) ─
+export interface RunCompareView {
+  baselineRunId: string;
+  candidateRunId: string;
+  objectiveCode: { baseline: string; candidate: string; match: boolean };
+  worldSeed: number;
+  thresholds: {
+    applied: Record<string, number>;
+    defaults: Record<string, number>;
+    overridden: string[];
+    docs: Record<string, string>;
+  };
+  organizations: Array<{
+    organizationId: string;
+    presentIn: { baseline: boolean; candidate: boolean };
+    metrics: Array<{
+      metric: string;
+      direction: 'higher-better' | 'lower-better' | 'unknown';
+      baselineValue: number;
+      candidateValue: number;
+      delta: number;
+      deltaKind: 'absolute' | 'relative-pct' | 'none';
+      changed: boolean;
+    }>;
+    stages: Array<{
+      adapterId: string;
+      role: string;
+      baselineModeledLatencyMs: number;
+      candidateModeledLatencyMs: number;
+      deltaModeledLatencyMs: number;
+      baselineModeledCostUsd: number;
+      candidateModeledCostUsd: number;
+      deltaModeledCostUsd: number;
+      observedLatencyMs: { baseline: number | null; candidate: number | null };
+    }>;
+    regressions: Array<{ organizationId: string; metric: string; kind: string; threshold: number; observed: number; detail: string }>;
+    improvements: Array<{ organizationId: string; metric: string; kind: string; threshold: number; observed: number; detail: string }>;
+  }>;
+  regressionFlags: Array<{ organizationId: string; metric: string; kind: string; threshold: number; observed: number; detail: string }>;
+  improvementFlags: Array<{ organizationId: string; metric: string; kind: string; threshold: number; observed: number; detail: string }>;
+  verdict: 'regression' | 'improvement' | 'no_material_change';
+  verdictBasis: string;
+  honestyNotes: string[];
+}
+
+// ─── P6.C11: Failure Atlas aggregation (production surface) ──────────────────
+export interface FailureAtlasView {
+  taxonomyVersion: number;
+  window: { from: string | null; to: string | null; filteredOut: number; note: string };
+  totals: {
+    cases: number;
+    open: number;
+    mitigated: number;
+    verified: number;
+    meanConfidence: number | null;
+    unclassified: number;
+  };
+  byCode: Array<{
+    code: string;
+    class: 'region' | 'stage' | 'provider' | 'policy';
+    count: number;
+    meanConfidence: number;
+    minConfidence: number;
+    maxConfidence: number;
+    open: number;
+    mitigated: number;
+    verified: number;
+    topSuspectedCauses: Array<{ cause: string; count: number }>;
+    policy: Array<{
+      code: string;
+      action: 'retry' | 'fallback' | 'quarantine' | 'escalate';
+      status: 'enforced' | 'proposed';
+      basis: string;
+    }>;
+  }>;
+  byRegion: Array<{ key: string; count: number; meanConfidence: number; minConfidence: number; maxConfidence: number; open: number; mitigated: number; verified: number; topSuspectedCauses: Array<{ cause: string; count: number }> }>;
+  byPipeline: Array<{ key: string; count: number; meanConfidence: number; minConfidence: number; maxConfidence: number; open: number; mitigated: number; verified: number; topSuspectedCauses: Array<{ cause: string; count: number }> }>;
+  byTechnologyVersion: Array<{ key: string; count: number; meanConfidence: number; minConfidence: number; maxConfidence: number; open: number; mitigated: number; verified: number; topSuspectedCauses: Array<{ cause: string; count: number }> }>;
+  honestyNotes: string[];
 }
 
 export interface PromotionRecordView {

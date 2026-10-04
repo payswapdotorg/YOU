@@ -36,7 +36,7 @@ const STAGE_ROLE: Record<string, string> = {
 };
 
 /** The analysis stage gets the deliberative soul; infrastructure stages the fast soul. */
-const STAGE_SOUL: Record<string, string> = {
+export const STAGE_SOUL: Record<string, string> = {
   'vlm-recon-1': 'soul-two-deep',
   'lab-segment-1': 'soul-one-fast',
   'lab-merge-1': 'soul-one-fast',

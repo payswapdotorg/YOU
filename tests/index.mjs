@@ -125,5 +125,27 @@ import './contract/b9-docs-playground.test.mjs';
 // boot, no network, no db)
 import './contract/game-export.test.mjs';
 
+// P6.C11 lab benchmark artifacts + Failure Atlas contract suite (imported
+// statically — pure unit over the C11 zero-import contract cores (lab/
+// run-manifest.ts + lab/failure-codes.ts + lab/soul-swap.ts), composed
+// exactly as the lab.benchmark executor and the /api/v1/lab routes fold
+// them: write-once run manifests (deterministic construction, structural vs
+// observed technology versions, per-stage provider/model/compute basis
+// labels, terminal runs NEVER mutated — re-runs are new rows referencing
+// their parent), run comparison + regression detection (cross-seed refused,
+// same-seed metric/stage diffs, configurable thresholded regression and
+// improvement flags, machine-readable verdict, observed latencies displayed
+// but never thresholded), the typed versioned failure-code taxonomy with
+// honest UNCLASSIFIED, atlas aggregation over REAL seeded cases only (by
+// code/region/pipeline/technology version, confidence rollups, inclusive
+// time windows, honest empty), the remediation lifecycle open → mitigated →
+// verified with evidence-required audit entries and honest 409 refusals,
+// policy decisions labeled enforced-vs-proposed, the deterministic
+// soul-swap scenario over the real seeded world + compiled organizations
+// with ONE injected grounding call per org (or honest modeled-only
+// degradation), and the content-addressed artifact export (same run → same
+// bytes → same sha256); no app boot, no network, no db)
+import './contract/lab-benchmark-atlas.test.mjs';
+
 globalThis.__YOU_TEST_AGGREGATED__ = true;
 
