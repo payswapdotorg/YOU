@@ -75,13 +75,15 @@ import './contract/agent-runtime.test.mjs';
 import './contract/evidence-ux.test.mjs';
 // P6.C7 Live session runtime unit suite (imported statically — pure unit
 // over the live runtime's zero-import half (live/live-core.ts): consent
-// enforcement at create (no covering grant → honest 403), the signaling
-// state machine (offer→answer ordering, honest 409s on wrong phase/role,
-// candidate cap), idempotent bounded state events, connection transitions
-// (terminal is terminal — no resurrection), tenant isolation via the route
-// fold harness, agent-session binding validation, the C6 turn-state → live
-// surface mapping, signaling tokens (HMAC sign/verify/tamper/expiry) and
-// the honest HTTP taxonomy; no app boot, no network, no db)
+// enforcement, signaling state machine, idempotent bounded state events,
+// connection transitions, tenant isolation, agent-session binding, C6
+// turn-state → live surface mapping, signaling tokens, honest HTTP taxonomy;
+// no app boot, no network, no db)
 import './contract/live-sessions.test.mjs';
+// P6.B7 AI-provider avatar UX suite (imported statically — pure unit over
+// the embodiment state machine + soul provider resolution: legal/illegal
+// transition table, fail-closed provider status, soul provider config
+// validation, tenant isolation; no app boot, no network, no db)
+import './contract/avatar-ux.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

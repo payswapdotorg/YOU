@@ -49,12 +49,15 @@ function gaze(state: string | null): { x: number; y: number } {
 export function AvatarStage({
   state,
   stateAt,
+  why,
   recentEvents,
   ended = false,
   className,
 }: {
   state: PerformanceState | 'custom' | null;
   stateAt?: string | null;
+  /** P6.B7 turn transparency — the honest WHY under the state chip (always derived from real runtime data). */
+  why?: string | null;
   recentEvents: AgentPerformanceEvent[];
   ended?: boolean;
   className?: string;
@@ -64,6 +67,7 @@ export function AvatarStage({
   const color = effective ? (PERFORMANCE_STATE_COLORS[effective] ?? PERFORMANCE_STATE_COLORS.custom) : 'var(--muted-foreground)';
   const look = gaze(effective);
   const eyesOpen = effective !== 'unavailable';
+  const halfLidded = effective === 'idle';
   const timeline = [...recentEvents]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 6);
@@ -76,7 +80,7 @@ export function AvatarStage({
           viewBox="0 0 220 190"
           className="h-44 w-full max-w-[260px]"
           role="img"
-          aria-label={`Avatar stage — ${effective ?? 'awaiting first event'}${ended ? ' (session ended)' : ''}`}
+          aria-label={`Avatar stage — ${effective ?? 'awaiting first event'}${why ? `: ${why}` : ''}${ended ? ' (session ended)' : ''}`}
         >
           <defs>
             <clipPath id={`youav-head-${clipId}`}>
@@ -116,7 +120,8 @@ export function AvatarStage({
               transform={effective === 'interrupted' ? 'rotate(9 126 54)' : undefined}
             />
 
-            {/* eyes */}
+            {/* eyes — P6.B7: idle is visually distinct via relaxed half-lidded
+                eyes (unavailable stays fully closed, engaged states stay open) */}
             {eyesOpen ? (
               <>
                 {[95, 125].map((cx) => (
@@ -124,6 +129,9 @@ export function AvatarStage({
                     <circle cx={cx} cy={72} r="7" fill="var(--background)" stroke="var(--border)" strokeWidth="1.2" />
                     <circle cx={cx + look.x} cy={72 + look.y} r="3" fill="var(--foreground)" opacity="0.85" />
                     <circle cx={cx + look.x + 1} cy={72 + look.y - 1} r="0.8" fill="var(--background)" opacity="0.9" />
+                    {halfLidded ? (
+                      <rect x={cx - 7.4} y={64.2} width={14.8} height={5.2} rx={2.4} fill="var(--muted)" stroke="var(--border)" strokeWidth="0.8" />
+                    ) : null}
                   </g>
                 ))}
               </>
@@ -242,8 +250,9 @@ export function AvatarStage({
           ) : null}
         </svg>
 
-        {/* current state chip */}
-        <div className="mt-1 flex items-center gap-2">
+        {/* current state chip + the WHY (turn transparency) — aria-live so
+            state changes are announced politely to assistive tech */}
+        <div className="mt-1 flex items-center gap-2" aria-live="polite">
           <span
             className={cn('inline-block size-2 rounded-full', !ended && effective && effective !== 'idle' && 'you-pulse')}
             style={{ backgroundColor: color }}
@@ -256,6 +265,11 @@ export function AvatarStage({
             <span className="text-[10px] text-muted-foreground">{rel(stateAt)}</span>
           ) : null}
         </div>
+        {why && !ended ? (
+          <p className="mt-1 max-w-[42ch] text-center text-[11px] leading-snug text-muted-foreground">
+            <span className="sr-only">Current state reason: </span>{why}
+          </p>
+        ) : null}
 
         {/* state timeline strip — real emitted events only */}
         <div className="mt-3 w-full border-t pt-3">

@@ -253,6 +253,14 @@ paths:
     post:
       summary: End a live session (terminal; P6.C7)
       responses: {"204": {"description": "No Content"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+  /agent/providers:
+    get:
+      summary: Agent provider registry surface — available/unavailable + reason per provider (fail-closed; P6.B7)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}}
+  /agent/sessions/{id}/interrupt:
+    post:
+      summary: Interrupt a running agent session turn (honest interrupted state; P6.B7)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}, "401": {"description": "Unauthorized"}}
   /maintenance/dead-jobs:
     get:
       summary: Maintenance — list dead-lettered jobs (operator session)
