@@ -38,5 +38,9 @@ import './agent-runtime.test.mjs';
 // P6.B4 deficiency-visualization suite (pure unit + boots/reuses the shared
 // app server like the B3 suite; direct Prisma seeding mirrors persisted rows)
 import './deficiency-viz.test.mjs';
+// P6.B6 Solution-Artifact completion suite (pure unit over the section
+// builders + boots/reuses the shared app server; real durable jobs:
+// capture.quality, twin.compile ×2, performance.fromText, render.image)
+import './artifact-completion.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

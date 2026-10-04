@@ -10,8 +10,9 @@ import { Drama, Loader2, Plus, RefreshCcw, ScrollText, Sparkles } from 'lucide-r
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
 import { describeApiError } from '@/lib/you/client/error-taxonomy';
-import type { PerformanceView, TwinView } from '@/lib/you/contracts';
+import type { PerformanceView, SolutionArtifactView, TwinView } from '@/lib/you/contracts';
 import { useJob } from '@/hooks/you/use-job';
+import { useYouStore } from '@/hooks/you/use-you-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -54,9 +55,17 @@ function PerformanceDetailDialog({
   performanceId: string | null;
   onClose: () => void;
 }) {
+  const navigate = useYouStore((s) => s.navigate);
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['performance', performanceId],
     queryFn: () => api.performances.get(performanceId as string),
+    enabled: !!performanceId,
+  });
+  // P6.B6 — the artifacts this performance travels through (its own
+  // performance-review + any render-reviews it drove), server-truth.
+  const artifactsQ = useQuery({
+    queryKey: ['performance-artifacts', performanceId],
+    queryFn: () => api.artifacts.list({ performanceId: performanceId as string }),
     enabled: !!performanceId,
   });
 
@@ -91,6 +100,34 @@ function PerformanceDetailDialog({
               <IdChip id={data.id} label="perf" />
             </div>
             <TrackTimeline tracks={data.tracks} durationMs={data.durationMs} />
+            {/* P6.B6 — artifacts this performance produced or drove */}
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">Solution Artifacts</div>
+              {artifactsQ.isPending ? (
+                <Skeleton className="h-9 w-full" />
+              ) : artifactsQ.isError ? (
+                <p className="text-[11px] text-muted-foreground">Artifact list unavailable.</p>
+              ) : artifactsQ.data.length ? (
+                <div className="space-y-1.5">
+                  {artifactsQ.data.map((a: SolutionArtifactView) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => navigate('artifact', { artifactId: a.id })}
+                      className="flex w-full items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left text-xs transition-colors hover:border-foreground/25"
+                    >
+                      <Badge variant="outline" className="font-mono text-[9px]">{a.type}</Badge>
+                      <span className="min-w-0 flex-1 truncate">{a.title}</span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">{rel(a.createdAt)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  No Solution Artifact references this performance yet — creating one from text produces it automatically.
+                </p>
+              )}
+            </div>
             {data.script ? (
               <div>
                 <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -110,6 +147,7 @@ function PerformanceDetailDialog({
 }
 
 export function PerformancesView() {
+  const navigate = useYouStore((s) => s.navigate);
   const [name, setName] = useState('');
   const [script, setScript] = useState('');
   const [twinId, setTwinId] = useState<string>('none');
@@ -228,16 +266,26 @@ export function PerformancesView() {
             retrying={createFromText.isPending}
           />
 
-          {jobId ? (
+              {jobId ? (
             <SectionCard
               title="Compilation job"
               description={done ? undefined : 'Polling the durable job — steps shown are real backend signals only.'}
             >
               <JobSteps job={job} compact />
               {done && succeeded ? (
-                <p className="mt-3 text-xs text-emerald-700 dark:text-emerald-400">
-                  Performance created — it appears in the list.
-                </p>
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                    Performance created — it appears in the list.
+                  </p>
+                  {typeof (job?.output ?? {}).solutionArtifactId === 'string' ? (
+                    <Button
+                      size="sm" className="gap-1.5"
+                      onClick={() => navigate('artifact', { artifactId: (job?.output as { solutionArtifactId: string }).solutionArtifactId })}
+                    >
+                      <Drama className="size-3.5" aria-hidden /> Open Solution Artifact
+                    </Button>
+                  ) : null}
+                </div>
               ) : null}
               {done && !succeeded ? (
                 <p className="mt-3 text-xs text-red-700 dark:text-red-400">Job finished unsuccessfully — see the error above.</p>

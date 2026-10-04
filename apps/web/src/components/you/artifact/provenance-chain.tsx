@@ -103,28 +103,43 @@ export function ProvenanceChain({ manifest, createdAt }: { manifest: SolutionArt
     });
   }
 
-  nodes.push({
-    icon: ShieldCheck,
-    title: 'Consent',
-    content: (
-      <div className="space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">subject</span>
-          <span className="font-mono text-[11px]">{manifest.consent.subjectId}</span>
-          {manifest.consent.scopes.map((s) => (
-            <Badge key={s} variant="outline" className="font-mono text-[9px]">{s}</Badge>
-          ))}
-        </div>
-        {manifest.consent.grantIds.length ? (
-          <div className="flex flex-wrap gap-1.5">
-            {manifest.consent.grantIds.map((g) => <IdChip key={g} id={g} label="grant" />)}
-          </div>
-        ) : (
-          <p className="text-[11px] text-muted-foreground">No grant ids recorded on this manifest.</p>
-        )}
-      </div>
-    ),
-  });
+  // P6.B6: consent is null on artifacts where no consent applies (e.g.
+  // text-origin performances record no subject evidence) — honest node text.
+  nodes.push(
+    manifest.consent
+      ? {
+          icon: ShieldCheck,
+          title: 'Consent',
+          content: (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-muted-foreground">subject</span>
+                <span className="font-mono text-[11px]">{manifest.consent.subjectId}</span>
+                {manifest.consent.scopes.map((s) => (
+                  <Badge key={s} variant="outline" className="font-mono text-[9px]">{s}</Badge>
+                ))}
+              </div>
+              {manifest.consent.grantIds.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {manifest.consent.grantIds.map((g) => <IdChip key={g} id={g} label="grant" />)}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">No grant ids recorded on this manifest.</p>
+              )}
+            </div>
+          ),
+        }
+      : {
+          icon: ShieldCheck,
+          title: 'Consent',
+          content: (
+            <p className="text-[11px] text-muted-foreground">
+              No consent grant applies — {manifest.sections?.consent?.reason
+                ?? 'this artifact records no subject evidence (no biometrics involved).'}
+            </p>
+          ),
+        },
+  );
 
   if (manifest.twinVersion) {
     nodes.push({

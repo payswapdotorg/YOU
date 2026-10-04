@@ -417,6 +417,10 @@ export const api = {
   // ─── Artifacts / feedback loop ────────────────────────────────────────────
   artifacts: {
     get: (id: string) => call<SolutionArtifactView>(`/artifacts/${id}`),
+    // P6.B6 — list with exact-match filters (twinVersionId / renderJobId /
+    // type / performanceId; performanceId matches the manifest slot).
+    list: (filters: { twinVersionId?: string; renderJobId?: string; type?: SolutionArtifactView['type']; performanceId?: string } = {}) =>
+      call<SolutionArtifactView[]>(`/artifacts${qs(filters)}`),
     feedback: (body: {
       solutionArtifactId?: string; twinVersionId: string; region?: string;
       verdict: string; note?: string;
