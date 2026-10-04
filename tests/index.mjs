@@ -83,5 +83,21 @@ import './contract/evidence-ux.test.mjs';
 // surface mapping, signaling tokens (HMAC sign/verify/tamper/expiry) and
 // the honest HTTP taxonomy; no app boot, no network, no db)
 import './contract/live-sessions.test.mjs';
+// P6.C8 virtual try-on contract suite (imported statically — pure unit over
+// the try-on adapter's zero-import contract core (adapters/try-on.ts),
+// composed exactly as the tryon.render executor folds it: the disclaimer
+// contract (verbatim visualOnlyDisclaimer on every result — altered or
+// missing refuses), fail-closed YOU_TRYON_PROVIDER resolution (unset/none →
+// honest unavailable; missing hosted credentials listed precisely; unknown
+// values throw), garment upload validation laws, identity-report honesty
+// (unverified = score null + reason, real scores only from real vision
+// comparisons, product-ref preservation as a structural invariant), the
+// diff manifest (provider-reported or the honest unknown), the strict
+// vision-score parser, the hosted Vertex call through injected fetch
+// (verbatim error taxonomy, no-image refusal, API-key header flow), the
+// pipeline fold (provider gate before ANY provider spend), the HTTP
+// taxonomy and tenant isolation via the route-fold harness; no app boot,
+// no network, no db)
+import './contract/try-on.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

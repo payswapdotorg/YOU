@@ -172,6 +172,54 @@ export async function visionAnalyze(
   }
 }
 
+/**
+ * P6.C8 — analyze TWO images in ONE vision call (a real comparison: both
+ * images are content parts of the same message). Same inference-only law
+ * and retry/breaker wrapping as visionAnalyze; used by the try-on
+ * identity-preservation checks. The caller parses the content into a score
+ * (adapters/try-on.ts parseVisionComparison — unparseable answers stay
+ * unknown, never guessed).
+ */
+export async function visionCompare(
+  aBase64DataUrl: string,
+  bBase64DataUrl: string,
+  prompt: string,
+  opts: { thinking?: boolean; model?: string } = {},
+): Promise<VisionResult> {
+  const t0 = Date.now();
+  try {
+    const outcome = await resilientZaiCall('vision', (zai) =>
+      zai.chat.completions.createVision({
+        model: opts.model?.trim() || 'glm-5v-turbo', // observed server-side binding; the registry default resolves the same id
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: aBase64DataUrl } },
+              { type: 'image_url', image_url: { url: bBase64DataUrl } },
+            ],
+          },
+        ],
+        thinking: { type: opts.thinking ? 'enabled' : 'disabled' },
+      }),
+    );
+    if (!outcome.ok) {
+      if (outcome.error instanceof ProviderUnavailableError) throw outcome.error; // typed fail-fast, verbatim
+      throw new ZaiProviderError('vision', outcome.error, outcome.attempts);
+    }
+    const res = outcome.value;
+    const content = res?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || content.trim().length === 0) {
+      throw new Error(`empty or non-string vision comparison content: ${JSON.stringify(res)?.slice(0, 300)}`);
+    }
+    return { content, latencyMs: Date.now() - t0, model: res?.model ?? 'unknown' };
+  } catch (e) {
+    if (e instanceof ZaiProviderError || e instanceof ProviderUnavailableError) throw e;
+    throw new ZaiProviderError('vision', e);
+  }
+}
+
 // ─── Image generation ────────────────────────────────────────────────────────
 
 export type ZaiImageSize =

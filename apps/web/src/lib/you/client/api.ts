@@ -39,6 +39,15 @@ import type {
   LiveSessionView,
   LiveSignalingPollView,
 } from '../live/live-core';
+// P6.C8 — try-on view types (lane-owned by lib/you/tryon/views, the same
+// type-only-import precedent: erased at compile time, no storage/db code
+// reaches the browser bundle; the contract surface lives in
+// adapters/try-on.ts where the node:test suite enforces it).
+import type {
+  GarmentAssetView,
+  TryOnComparisonView,
+  TryOnJobSummaryView,
+} from '../tryon/views';
 
 const BASE = '/api/v1';
 
@@ -315,6 +324,31 @@ export const api = {
     }, idem?: string) =>
       call<{ jobId: string }>('/renders', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     get: (id: string) => call<RenderJobView>(`/renders/${id}`),
+  },
+
+  // ─── Virtual try-on (P6.C8 — e-commerce, honest claims) ──────────────────
+  // Garment/product assets (merchant surface: productRef rides the garment,
+  // preserved verbatim through artifacts + the 'tryon.completed' signed
+  // webhook callback). Try-on jobs are durable tryon.render jobs; without a
+  // configured provider they FAIL honestly with the verbatim reason.
+  tryOn: {
+    garments: () => call<GarmentAssetView[]>('/try-on/garments'),
+    getGarment: (id: string) => call<GarmentAssetView>(`/try-on/garments/${id}`),
+    uploadGarment: (file: File, meta: { displayName: string; productRef?: string; productUrl?: string }) => {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('displayName', meta.displayName);
+      if (meta.productRef) form.append('productRef', meta.productRef);
+      if (meta.productUrl) form.append('productUrl', meta.productUrl);
+      return call<GarmentAssetView>('/try-on/garments', { method: 'POST', body: form });
+    },
+    jobs: () => call<TryOnJobSummaryView[]>('/try-on'),
+    getJob: (id: string) => call<TryOnJobSummaryView & { comparison: TryOnComparisonView | null }>(`/try-on/${id}`),
+    create: (
+      body: { twinId: string; twinVersionId: string; garmentAssetId: string; style?: 'photorealistic' | 'stylized-portrait' | 'anime' | 'illustration' },
+      idem?: string,
+    ) =>
+      call<{ jobId: string; tryOnJobId: string }>('/try-on', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
   },
 
   // ─── Templates ────────────────────────────────────────────────────────────
