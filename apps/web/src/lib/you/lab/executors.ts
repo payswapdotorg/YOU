@@ -113,6 +113,23 @@ import {
 } from '../adapters/try-on';
 import { reconVisionCompare } from '../ai/recon-provider';
 import { mimeFromKey } from '../core/storage';
+// P6.C9 — game/AR export: the deterministic local emitter (adapters/
+// game-export.ts, zero-import pure core). The executor composes it with the
+// real seams: content-addressed storage for the GLB/VRM binary + the mapping
+// table + the manifest, and the honest engine package surface. No provider —
+// the fail-closed axes are FORMAT (route validation) and GEOMETRY (the
+// usable-geometry gate below, honest refusal, never a default body).
+import {
+  EXPORT_CLAIMS,
+  EXPORT_GLB_JOB_KIND,
+  EXPORT_VRM_JOB_KIND,
+  ExportRefusal,
+  buildPackageManifest,
+  checkGeometryUsable,
+  parseHtirForExport,
+  runExportPipeline,
+  type ValidatedExportInput,
+} from '../adapters/game-export';
 
 const registry = new Map<JobKind, JobExecutor>();
 
@@ -2704,5 +2721,302 @@ registerExecutor({
         { type: 'garmentAsset', id: job.garmentAsset.id },
       ],
     };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// export.glb / export.vrm — game/AR export (P6.C9, adapters/game-export.ts)
+//
+// The honest pipeline: consent re-verify (reconstruct scope — an export
+// reconstructs the twin's HTIR geometry into a new engine representation) →
+// usable-geometry gate (fail-closed: unknown skeleton convention or no
+// finite measurements → honest refusal, NEVER a default body pretending to
+// be this twin) → the deterministic local emitter (byte-identical for
+// identical TwinVersion + options; three REAL LOD meshes, VRM 0.x extension
+// on the vrm path, zero-delta facial placeholders only for the HTIR
+// articulation set) → THREE OutputArtifacts (the GLB/VRM binary, the
+// machine-readable retargeting mapping table, the structural-vs-derived
+// manifest) + the honest engine package manifest whose README states
+// exactly what is and is NOT included. No provider, no network, no secrets.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function loadExportJob(exportJobId: string, tenantId: string) {
+  const job = await db.exportJob.findUnique({
+    where: { id: exportJobId },
+    include: { twin: true, twinVersion: true },
+  });
+  if (!job) throw new Error(`not_found: export job ${exportJobId}`);
+  if (job.tenantId !== tenantId) throw new Error(`forbidden: export job belongs to another tenant`);
+  if (!job.twin || !job.twinVersion) throw new Error(`not_found: twin version ${job.twinVersionId} for export job`);
+  return job;
+}
+
+async function executeExportJob(
+  input: Record<string, unknown>,
+  ctx: JobContext,
+  format: 'glb' | 'vrm',
+): Promise<{ output: Record<string, unknown>; entities?: Array<{ type: string; id: string }> }> {
+  const exportJobId = reqString(input, 'exportJobId');
+  const steps = new Steps([
+    ['validate', 'Load export job, twin version and HTIR'],
+    ['consent', 'Verify reconstruct consent (server-enforced)'],
+    ['geometry', 'Check HTIR geometry usability (fail-closed)'],
+    ['emit', `Emit the deterministic ${format.toUpperCase()} bundle (LODs + mapping)`],
+    ['persist', 'Persist export artifacts with the honest manifest'],
+  ]);
+
+  await ctx.report({ steps: steps.running('validate'), progress: 0.05, status: 'running' });
+  const job = await loadExportJob(exportJobId, ctx.tenantId);
+  const lodLevel = typeof job.lodLevel === 'number' && job.lodLevel >= 0 && job.lodLevel <= 2 ? job.lodLevel : 0;
+  const includeFacialControls = job.includeFacialControls === true;
+  await db.exportJob.update({ where: { id: job.id }, data: { status: 'running', startedAt: new Date() } });
+  steps.done(
+    'validate',
+    `twin ${job.twin.displayName} v${job.twinVersion.version}, format ${format}, lodLevel ${lodLevel}${includeFacialControls ? '' : ', facial controls omitted by option'}`,
+  );
+  await ctx.report({ steps: steps.all(), progress: 0.15 });
+
+  await ctx.report({ steps: steps.running('consent'), progress: 0.2 });
+  const grants = await activeGrantsFor(job.twin.subjectId, job.twin.tenantId, 'reconstruct');
+  assertConsent(grants, job.twin.subjectId, 'reconstruct');
+  steps.done('consent', `${grants.length} active reconstruct-scope grant(s)`);
+  await ctx.report({ steps: steps.all(), progress: 0.25 });
+
+  // FAIL-CLOSED usable-geometry gate — BEFORE any emission. The typed
+  // refusal fails the job with the verbatim reason and the ExportJob row
+  // records it (never left queued forever, never a default body).
+  await ctx.report({ steps: steps.running('geometry'), progress: 0.3 });
+  const rawHtir = parseJsonField<unknown>(job.twinVersion.htir, null);
+  const gate = checkGeometryUsable(parseHtirForExport(rawHtir));
+  if (!gate.ok) {
+    steps.failed('geometry', gate.reason);
+    await ctx.report({ steps: steps.all(), status: 'failed' }).catch(() => undefined);
+    await db.exportJob
+      .update({ where: { id: job.id }, data: { status: 'failed', error: gate.reason, finishedAt: new Date() } })
+      .catch(() => undefined);
+    throw new ExportRefusal('geometry_unavailable', gate.reason);
+  }
+  steps.done('geometry', `skeleton ${gate.htir.skeleton}, ${Object.keys(gate.htir.measurements).length} structural measurement(s)`);
+  await ctx.report({ steps: steps.all(), progress: 0.35 });
+
+  // the deterministic local emission (pure; assertExportSuccess enforces
+  // the honest-claims contract on the composed result)
+  await ctx.report({ steps: steps.running('emit'), progress: 0.4 });
+  const exportInput: ValidatedExportInput = {
+    twinId: job.twinId,
+    twinVersionId: job.twinVersionId,
+    format,
+    lodLevel: lodLevel as 0 | 1 | 2,
+    includeFacialControls,
+  };
+  let result;
+  try {
+    result = runExportPipeline(rawHtir, exportInput);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    steps.failed('emit', message.slice(0, 300));
+    await ctx.report({ steps: steps.all(), status: 'failed' }).catch(() => undefined);
+    await db.exportJob
+      .update({ where: { id: job.id }, data: { status: 'failed', error: message, finishedAt: new Date() } })
+      .catch(() => undefined);
+    throw err;
+  }
+  steps.done(
+    'emit',
+    `${result.bytes.length} bytes, LODs ${result.manifest.lods.map((l) => `${l.triangles}t`).join('/')} (real emitted counts), ${result.mappingTable.blendshapes.length} facial placeholder(s)`,
+  );
+  await ctx.report({ steps: steps.all(), progress: 0.7 });
+
+  // persist: the model binary + the mapping table + the manifest, all
+  // content-addressed; then the honest engine package manifest referencing
+  // the three stored files
+  await ctx.report({ steps: steps.running('persist'), progress: 0.75 });
+  const modelStored = await putObject(Buffer.from(result.bytes), { kind: 'export', mime: 'model/gltf-binary' });
+  const mappingStored = await putObject(Buffer.from(JSON.stringify(result.mappingTable)), {
+    kind: 'export',
+    mime: 'application/json',
+  });
+  const manifestStored = await putObject(Buffer.from(JSON.stringify(result.manifest)), {
+    kind: 'export',
+    mime: 'application/json',
+  });
+
+  const mappingArtifact = await db.outputArtifact.create({
+    data: {
+      tenantId: job.tenantId,
+      kind: 'game-export-mapping',
+      storageKey: mappingStored.storageKey,
+      contentHash: mappingStored.contentHash,
+      bytes: mappingStored.bytes,
+      mime: 'application/json',
+      meta: JSON.stringify({
+        adapterId: 'game-export-1',
+        adapterVersion: '1',
+        role: 'retargeting-mapping',
+        format,
+        note: 'machine-readable bone/blendshape mapping table (VRM + Unity Mecanim + UE5 mannequin conventions + ARKit blendshape names where they map)',
+      }),
+    },
+  });
+  const manifestArtifact = await db.outputArtifact.create({
+    data: {
+      tenantId: job.tenantId,
+      kind: 'game-export-manifest',
+      storageKey: manifestStored.storageKey,
+      contentHash: manifestStored.contentHash,
+      bytes: manifestStored.bytes,
+      mime: 'application/json',
+      meta: JSON.stringify({
+        adapterId: 'game-export-1',
+        adapterVersion: '1',
+        role: 'export-manifest',
+        format,
+        note: 'the structural-vs-derived honesty manifest (part of the export contract)',
+      }),
+    },
+  });
+  const packageManifest = buildPackageManifest({
+    format,
+    files: [
+      {
+        role: 'model',
+        // placeholder — buildPrimaryMeta closes this self-reference with the
+        // REAL primary artifact id after the row is created
+        artifactId: 'pending',
+        storageKey: modelStored.storageKey,
+        contentHash: modelStored.contentHash,
+        bytes: modelStored.bytes,
+        mime: 'model/gltf-binary',
+      },
+      {
+        role: 'retargeting-mapping',
+        artifactId: mappingArtifact.id,
+        storageKey: mappingStored.storageKey,
+        contentHash: mappingStored.contentHash,
+        bytes: mappingStored.bytes,
+        mime: 'application/json',
+      },
+      {
+        role: 'export-manifest',
+        artifactId: manifestArtifact.id,
+        storageKey: manifestStored.storageKey,
+        contentHash: manifestStored.contentHash,
+        bytes: manifestStored.bytes,
+        mime: 'application/json',
+      },
+    ],
+  });
+
+  // the primary artifact's meta references its own id in the package
+  // manifest (the model file entry) — created once, closed with one update
+  const buildPrimaryMeta = (modelArtifactId: string) => ({
+    adapterId: 'game-export-1',
+    adapterVersion: '1',
+    // THE contract field — checked by every view, verified by
+    // assertExportSuccess, stated in the package README
+    visualClaims: EXPORT_CLAIMS,
+    manifest: result.manifest,
+    mappingTable: result.mappingTable,
+    packageManifest: {
+      ...packageManifest,
+      files: packageManifest.files.map((f) => (f.role === 'model' ? { ...f, artifactId: modelArtifactId } : f)),
+    },
+    companionArtifacts: [
+      { role: 'retargeting-mapping', artifactId: mappingArtifact.id },
+      { role: 'export-manifest', artifactId: manifestArtifact.id },
+    ],
+    provenance: {
+      twinId: job.twinId,
+      twinVersionId: job.twinVersionId,
+      consentGrantIds: grants.map((g) => g.id),
+      subjectId: job.twin.subjectId,
+      format,
+      lodLevel,
+      includeFacialControls,
+      deterministic: true,
+      costUsd: 0,
+      costBasis: 'local deterministic emitter — no provider call, no cost',
+    },
+  });
+  const primaryArtifact = await db.outputArtifact.create({
+    data: {
+      tenantId: job.tenantId,
+      kind: 'game-export',
+      storageKey: modelStored.storageKey,
+      contentHash: modelStored.contentHash,
+      bytes: modelStored.bytes,
+      mime: 'model/gltf-binary',
+      meta: JSON.stringify(buildPrimaryMeta('pending')),
+    },
+  });
+  // close the self-reference: the package manifest now points at the REAL
+  // primary artifact id
+  await db.outputArtifact.update({
+    where: { id: primaryArtifact.id },
+    data: { meta: JSON.stringify(buildPrimaryMeta(primaryArtifact.id)) },
+  });
+  await db.exportJob.update({
+    where: { id: job.id },
+    data: { status: 'succeeded', artifactId: primaryArtifact.id, finishedAt: new Date() },
+  });
+  steps.done(
+    'persist',
+    `artifacts ${primaryArtifact.id} (model) + ${mappingArtifact.id} (mapping) + ${manifestArtifact.id} (manifest)`,
+  );
+  await ctx.report({ steps: steps.all(), progress: 1 });
+
+  // the engine-integration callback shape: everything a Unity/Unreal/AR
+  // consumer needs (artifact refs + the honest claims text) — delivered
+  // through the event stream the webhook fan-out already serves
+  await emitEvent(ctx.tenantId, 'export.completed', 'exportJob', job.id, {
+    exportJobId: job.id,
+    jobId: ctx.jobId,
+    artifactId: primaryArtifact.id,
+    mappingArtifactId: mappingArtifact.id,
+    manifestArtifactId: manifestArtifact.id,
+    twinId: job.twinId,
+    twinVersionId: job.twinVersionId,
+    format,
+    lodLevel,
+    lods: result.manifest.lods,
+    claims: EXPORT_CLAIMS,
+  });
+  await recordUsage(ctx.tenantId, `job.export.${format}`, 1, {
+    exportJobId: job.id,
+    artifactId: primaryArtifact.id,
+    bytes: modelStored.bytes,
+  });
+
+  return {
+    output: {
+      exportJobId: job.id,
+      artifactId: primaryArtifact.id,
+      mappingArtifactId: mappingArtifact.id,
+      manifestArtifactId: manifestArtifact.id,
+      format,
+      lodLevel,
+      lods: result.manifest.lods,
+      claims: EXPORT_CLAIMS,
+    },
+    entities: [
+      { type: 'exportJob', id: job.id },
+      { type: 'outputArtifact', id: primaryArtifact.id },
+      { type: 'outputArtifact', id: mappingArtifact.id },
+      { type: 'outputArtifact', id: manifestArtifact.id },
+    ],
+  };
+}
+
+registerExecutor({
+  kind: EXPORT_GLB_JOB_KIND,
+  async execute(input, ctx) {
+    return executeExportJob(input, ctx, 'glb');
+  },
+});
+
+registerExecutor({
+  kind: EXPORT_VRM_JOB_KIND,
+  async execute(input, ctx) {
+    return executeExportJob(input, ctx, 'vrm');
   },
 });

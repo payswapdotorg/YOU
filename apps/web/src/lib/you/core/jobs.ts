@@ -27,7 +27,9 @@ export type DurableJobKind =
   | 'template.analyze'
   | 'f1.reconstruct'
   | 'agent.turn'
-  | 'tryon.render'; // P6.C8 lane-local widening — same law; TL adds it at landing
+  | 'tryon.render' // P6.C8 lane-local widening — same law; TL adds it at landing
+  | 'export.glb' // P6.C9 lane-local widening — same law; TL adds it at landing
+  | 'export.vrm'; // P6.C9 lane-local widening — same law; TL adds it at landing
 
 /**
  * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
@@ -124,6 +126,23 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'tryon', label: 'Run the hosted virtual try-on' },
     { key: 'comparison', label: 'Build diff manifest + identity-preservation report' },
     { key: 'persist', label: 'Persist comparison artifact with the visual-only disclaimer' },
+  ],
+  // P6.C9 — game/AR export: the deterministic local emitter (no provider).
+  // Fail-closed geometry gate BEFORE any emission; every artifact carries
+  // the structural-vs-derived manifest + the verbatim honest-claims text.
+  'export.glb': [
+    { key: 'validate', label: 'Load export job, twin version and HTIR' },
+    { key: 'consent', label: 'Verify reconstruct consent (server-enforced)' },
+    { key: 'geometry', label: 'Check HTIR geometry usability (fail-closed)' },
+    { key: 'emit', label: 'Emit the deterministic GLB bundle (LODs + mapping)' },
+    { key: 'persist', label: 'Persist export artifacts with the honest manifest' },
+  ],
+  'export.vrm': [
+    { key: 'validate', label: 'Load export job, twin version and HTIR' },
+    { key: 'consent', label: 'Verify reconstruct consent (server-enforced)' },
+    { key: 'geometry', label: 'Check HTIR geometry usability (fail-closed)' },
+    { key: 'emit', label: 'Emit the deterministic VRM bundle (LODs + mapping)' },
+    { key: 'persist', label: 'Persist export artifacts with the honest manifest' },
   ],
 };
 
