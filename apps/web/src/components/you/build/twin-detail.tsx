@@ -19,7 +19,7 @@ import { useYouStore } from '@/hooks/you/use-you-store';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
 import type { CaptureSessionView, TwinView, TwinVersionView } from '@/lib/you/contracts';
 import {
-  ArrowLeft, Camera, FileBox, GitBranch, GitCompareArrows, Hammer, History,
+  ArrowLeft, Camera, FileBox, Gauge, GitBranch, GitCompareArrows, Hammer, History,
   Loader2, Plus, ShieldCheck, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { ConfidenceBar, QueryError, RowSkeletons } from './confidence';
 import { ConsentGrantDialog } from './consent-dialog';
 import { CaptureSessionPanel } from './capture-session-panel';
+import { DeficiencyMap } from './deficiency-map';
 import { F1CaptureFlow } from './f1-capture-flow';
 import { F1ConsentGateDialog } from './f1-consent-dialog';
 import { EvidenceRequestCard } from './evidence-request-card';
@@ -36,7 +37,7 @@ import { ProvenancePanel } from './provenance';
 import { VersionCompare } from './version-compare';
 import { timeAgo } from './format';
 
-export const TWIN_TABS = ['versions', 'capture', 'improve', 'compare'] as const;
+export const TWIN_TABS = ['versions', 'capture', 'quality', 'improve', 'compare'] as const;
 export type TwinTab = (typeof TWIN_TABS)[number];
 
 const SESSION_TERMINAL: CaptureSessionView['status'][] = ['complete', 'failed'];
@@ -371,6 +372,8 @@ export function TwinDetail({
         <TabsList className="h-10 w-full justify-start overflow-x-auto you-scroll p-1 sm:w-auto">
           <TabsTrigger value="versions" className="gap-1.5 text-[13px]"><GitBranch className="size-3.5" aria-hidden /> Versions</TabsTrigger>
           <TabsTrigger value="capture" className="gap-1.5 text-[13px]"><Camera className="size-3.5" aria-hidden /> Capture</TabsTrigger>
+          {/* P6.B4 — the honest quality-deficiency capability map */}
+          <TabsTrigger value="quality" className="gap-1.5 text-[13px]"><Gauge className="size-3.5" aria-hidden /> Quality</TabsTrigger>
           <TabsTrigger value="improve" className="gap-1.5 text-[13px]"><History className="size-3.5" aria-hidden /> Improve</TabsTrigger>
           <TabsTrigger value="compare" className="gap-1.5 text-[13px]"><GitCompareArrows className="size-3.5" aria-hidden /> Compare</TabsTrigger>
         </TabsList>
@@ -531,6 +534,19 @@ export function TwinDetail({
           ) : null}
         </TabsContent>
 
+        {/* ── Quality (P6.B4 — deficiency map) ─────────────────────────── */}
+        <TabsContent value="quality" className="mt-4">
+          <DeficiencyMap
+            twinId={twinId}
+            versions={versions}
+            selectedVersionId={selectedVersionId}
+            onSelectVersion={setSelectedVersionId}
+            hasCaptures={sessions.length > 0}
+            onCapture={() => onTabChange('capture')}
+            onImprove={() => onTabChange('improve')}
+          />
+        </TabsContent>
+
         {/* ── Improve ───────────────────────────────────────────────────────── */}
         <TabsContent value="improve" className="mt-4">
           <ImproveTab
@@ -548,7 +564,7 @@ export function TwinDetail({
 
         {/* ── Compare ───────────────────────────────────────────────────────── */}
         <TabsContent value="compare" className="mt-4">
-          <VersionCompare versions={versions} />
+          <VersionCompare twinId={twinId} versions={versions} />
         </TabsContent>
       </Tabs>
 
