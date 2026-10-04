@@ -22,7 +22,12 @@ import { bumpCounter } from './metrics';
  * The value flows through Job.kind rows/views unchanged; TL should add the
  * union member at landing (see w2a-report.md compatibility notes).
  */
-export type DurableJobKind = JobKind | 'template.analyze' | 'f1.reconstruct' | 'agent.turn';
+export type DurableJobKind =
+  | JobKind
+  | 'template.analyze'
+  | 'f1.reconstruct'
+  | 'agent.turn'
+  | 'tryon.render'; // P6.C8 lane-local widening — same law; TL adds it at landing
 
 /**
  * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
@@ -107,6 +112,18 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'enforce', label: 'Capability manifests (server-side enforcement)' },
     { key: 'reply', label: 'Run the Soul (LLM turns + bounded tool rounds)' },
     { key: 'persist', label: 'Persist agent turn with events, seed and latency' },
+  ],
+  // P6.C8 — virtual try-on: provider fail-closed → baseline render → hosted
+  // try-on → comparison artifact + identity report. The provider step is a
+  // REAL gate: no configured provider → the job fails honestly there.
+  'tryon.render': [
+    { key: 'validate', label: 'Load try-on job, twin version and garment' },
+    { key: 'consent', label: 'Verify render consent (server-enforced)' },
+    { key: 'provider', label: 'Resolve the try-on provider (fail-closed)' },
+    { key: 'baseline', label: 'Render the twin baseline image (body-aware base)' },
+    { key: 'tryon', label: 'Run the hosted virtual try-on' },
+    { key: 'comparison', label: 'Build diff manifest + identity-preservation report' },
+    { key: 'persist', label: 'Persist comparison artifact with the visual-only disclaimer' },
   ],
 };
 

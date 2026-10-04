@@ -16,7 +16,7 @@
 // wrappers receive the resolved model id explicitly; no other call site in
 // the repo selects a recon model.
 // ═══════════════════════════════════════════════════════════════════════════
-import { visionAnalyze } from './zai';
+import { visionAnalyze, visionCompare } from './zai';
 import { openRouterVisionAnalyze } from './openrouter';
 import { resolveModel, type ResolutionSource } from './registry';
 
@@ -66,4 +66,30 @@ export async function reconVisionAnalyze(
     return openRouterVisionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: modelId });
   }
   return visionAnalyze(imageBase64DataUrl, prompt, { ...opts, model: modelId });
+}
+
+/**
+ * P6.C8 — two-image vision COMPARISON through the same resolution law (the
+ * recon seam's provider routing, unchanged). Used by the try-on identity
+ * checks (garment identity / twin identity preservation): both images are
+ * passed as vision content in ONE call so the model can actually compare.
+ *
+ * Honest capability disclosure: the openrouter branch does not implement a
+ * two-image call in v1 — it throws instead of degrading to two independent
+ * single-image analyses (which cannot compare). Callers surface the refusal
+ * as an honest "identity check unverified" with this verbatim reason.
+ */
+export async function reconVisionCompare(
+  aDataUrl: string,
+  bDataUrl: string,
+  prompt: string,
+  opts: { thinking?: boolean } = {},
+) {
+  const { provider, modelId } = reconResolution();
+  if (provider === 'openrouter') {
+    throw new Error(
+      'two-image vision comparison is not implemented on the openrouter recon path (P6.C8 v1) — try-on identity checks stay unverified there',
+    );
+  }
+  return visionCompare(aDataUrl, bDataUrl, prompt, { ...opts, model: modelId });
 }

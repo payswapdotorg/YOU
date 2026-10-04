@@ -503,14 +503,33 @@ export const TECHNOLOGY_CATALOG: CatalogEntry[] = [
     vendor: 'Google Cloud',
     runtime: 'hosted API (Vertex AI)',
     patentNotes: 'provider-held IP; characterize via public documentation and authorized API usage only',
-    meta: { characterization: 'public docs only; no unauthorized internal inspection', docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-virtual-try-on' },
+    meta: {
+      characterization: 'public docs only; no unauthorized internal inspection',
+      docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-virtual-try-on',
+      // P6.C8 — the adapter status note (kept consistent with what ships):
+      // adapters/try-on.ts implements the provider-neutral try-on CONTRACT +
+      // the hosted call mapped from public docs, fail-closed behind
+      // YOU_TRYON_PROVIDER. Unverified in this sandbox (no authorized
+      // credential) — the honest gap stays labeled.
+      adapterNote:
+        'tryon-adapter-1 (adapters/try-on.ts) behind YOU_TRYON_PROVIDER: hosted call implemented from public docs, UNVERIFIED without credentials; sandbox default is fail-closed unavailable',
+    },
     versions: [
       {
         version: 'GA (verify current)',
-        adapterVersion: '0 (characterization only — no adapter; no account/authorization in this sandbox)',
-        capabilities: ['virtual-try-on', 'garment-transfer'],
-        resources: { access: 'authorized GCP account + billing', costModel: 'per-image, provider-priced' },
-        failureClasses: ['provider-terms-change', 'garment-boundary-artifacts', 'model-card-drift'],
+        adapterVersion:
+          '1 (tryon-adapter-1, P6.C8 — provider-neutral contract + fail-closed hosted path; visual-only claims enforced by contract, unverified without an authorized credential)',
+        capabilities: ['virtual-try-on', 'garment-transfer', 'identity-preservation-report'],
+        resources: {
+          access: 'authorized GCP account + billing (YOU_TRYON_VERTEX_PROJECT/_LOCATION/_KEY)',
+          costModel: 'per-image, provider-priced',
+        },
+        failureClasses: [
+          'provider-terms-change',
+          'garment-boundary-artifacts',
+          'model-card-drift',
+          'visual-vs-physical-fit-conflation', // the P6.C8 contract risk the disclaimer mitigates
+        ],
         provenance: { docsUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/image/generate-virtual-try-on', source: 'closed' },
       },
     ],
