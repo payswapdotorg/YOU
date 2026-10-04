@@ -90,8 +90,6 @@ function TourCard({ userId }: { userId: string }) {
 
   return (
     <aside
-      role="dialog"
-      aria-modal={false}
       aria-label={`Getting started — step ${stepIndex + 1} of ${TOUR_STOPS.length}: ${stop.title}`}
       className="fixed bottom-4 right-4 z-50 w-[calc(100vw-2rem)] max-w-sm rounded-xl border bg-card p-4 shadow-lg sm:bottom-6 sm:right-6"
     >
