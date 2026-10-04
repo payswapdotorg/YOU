@@ -73,5 +73,15 @@ import './contract/agent-runtime.test.mjs';
 // mid-fulfillment grace, list filtering, tenant isolation; DB seeding only
 // for timestamps + the isolation tenant — no network beyond 127.0.0.1)
 import './contract/evidence-ux.test.mjs';
+// P6.C7 Live session runtime unit suite (imported statically — pure unit
+// over the live runtime's zero-import half (live/live-core.ts): consent
+// enforcement at create (no covering grant → honest 403), the signaling
+// state machine (offer→answer ordering, honest 409s on wrong phase/role,
+// candidate cap), idempotent bounded state events, connection transitions
+// (terminal is terminal — no resurrection), tenant isolation via the route
+// fold harness, agent-session binding validation, the C6 turn-state → live
+// surface mapping, signaling tokens (HMAC sign/verify/tamper/expiry) and
+// the honest HTTP taxonomy; no app boot, no network, no db)
+import './contract/live-sessions.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

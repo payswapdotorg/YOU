@@ -68,6 +68,15 @@ import {
   type AgentSoulBehaviorParams,
   type AgentSoulPersona,
 } from '../agent/runtime-core';
+// P6.C7 — the agent → live bridge: stream turn states into live sessions
+// bound to this agent session (low-latency path, fully separate from offline
+// rendering). BEST-EFFORT law lives inside live/runtime.ts — a live push can
+// never fail the durable agent turn. No import cycle: live/runtime touches
+// core/consent + core/events + db only (not jobs/executors).
+import {
+  pushAgentStatesToLiveSessions,
+  pushAgentTurnEventToLiveSessions,
+} from '../live/runtime';
 import { executeAgentTool } from './agent-tools';
 import { requireConsent } from '../core/consent';
 import { generateWorld } from './world';
@@ -2046,6 +2055,13 @@ const agentTurnExecutor = {
     const grant = await requireConsent(ctx.tenantId, session.twin.subjectId, 'embodiment');
     steps.done('consent', `grant ${grant.id}`);
 
+    // P6.C7 — the turn is verified and running: bound live sessions enter
+    // `listening` (the twin is listening to the user's message). Refused
+    // turns never emit live states (post-consent ordering is the honest one).
+    await pushAgentStatesToLiveSessions(ctx.tenantId, session.id, [
+      { state: 'listening', note: 'turn accepted — the twin is listening' },
+    ]);
+
     await ctx.report({ steps: steps.running('enforce'), progress: 0.2 });
     if (!soulSnap.manifest.can.includes('conversation')) {
       throw new Error(
@@ -2065,12 +2081,19 @@ const agentTurnExecutor = {
     // chatComplete carries breaker-inside-retry per LLM call; executeAgentTool
     // is the W2.C registry (body-contract enforcement) — the Soul capability
     // manifest is enforced INSIDE the engine before any tool executes.
+    // P6.C7: onEvent streams each performance event into bound live sessions
+    // AS IT IS EMITTED (thinking → tool_use → thinking → speaking) — the
+    // low-latency live path, best-effort by law.
     const result = await runAgentTurnEngine(
       {
         chat: (msgs, opts) => chatComplete(msgs, opts),
         executeTool: (toolCtx, call) => executeAgentTool(toolCtx, call),
         now: () => Date.now(),
         uuid: () => crypto.randomUUID(),
+        onEvent: async (event) => {
+          // awaited by the engine — pushes stay ordered (no RMW races)
+          await pushAgentTurnEventToLiveSessions(ctx.tenantId, session.id, event);
+        },
       },
       {
         tenantId: ctx.tenantId,
@@ -2133,6 +2156,11 @@ const agentTurnExecutor = {
       consentGrantId: grant.id,
       requestParams: result.requestParams,
     });
+    // P6.C7 — the turn is complete: bound live sessions return to `idle`
+    // (post-persist, same best-effort law).
+    await pushAgentStatesToLiveSessions(ctx.tenantId, session.id, [
+      { state: 'idle', note: 'turn complete' },
+    ]);
     await recordUsage(ctx.tenantId, 'llm.calls', result.llmCalls, {
       sessionId: session.id,
       soulId: session.soulId,

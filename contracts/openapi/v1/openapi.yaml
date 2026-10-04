@@ -227,6 +227,32 @@ paths:
     get:
       summary: lab — technologies
       responses: {"200": {"description": "OK"}}
+  /live-sessions:
+    get:
+      summary: Live sessions — list (P6.C7 realtime path; consent-scoped)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}}
+    post:
+      summary: Live sessions — create (consent-enforced, returns signaling token; P6.C7)
+      responses: {"201": {"description": "Created"}, "403": {"description": "Forbidden"}, "401": {"description": "Unauthorized"}}
+  /live-sessions/{id}:
+    get:
+      summary: Live session detail (signaling state; P6.C7)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+  /live-sessions/{id}/signal:
+    get:
+      summary: Live signaling — poll relayed SDP/ICE (HTTP polling v1; P6.C7)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+    post:
+      summary: Live signaling — relay SDP offer/answer + ICE candidates (honest 409 on wrong state; P6.C7)
+      responses: {"200": {"description": "OK"}, "409": {"description": "Conflict"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+  /live-sessions/{id}/state:
+    post:
+      summary: Live performance state events (idempotent, bounded ring; P6.C7)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
+  /live-sessions/{id}/end:
+    post:
+      summary: End a live session (terminal; P6.C7)
+      responses: {"204": {"description": "No Content"}, "404": {"description": "Not Found"}, "401": {"description": "Unauthorized"}}
   /maintenance/dead-jobs:
     get:
       summary: Maintenance — list dead-lettered jobs (operator session)
