@@ -42,6 +42,7 @@ model Tenant {
   runtimeBodies  AgentRuntimeBody[]
   runtimeSouls   AgentRuntimeSoul[]
   runtimeSessions AgentRuntimeSession[]
+  liveSessions   LiveSession[]
 }
 
 model User {
@@ -225,6 +226,7 @@ model Twin {
   avatarSessions  AgentAvatarSession[]
   runtimeSouls    AgentRuntimeSoul[]
   runtimeSessions AgentRuntimeSession[]
+  liveSessions    LiveSession[]
 }
 
 model TwinVersion {
@@ -744,6 +746,7 @@ model AgentRuntimeSession {
   body   AgentRuntimeBody   @relation(fields: [bodyId], references: [id])
   soul   AgentRuntimeSoul   @relation(fields: [soulId], references: [id])
   turns  AgentRuntimeTurn[]
+  liveSessions LiveSession[]
 }
 
 model AgentRuntimeTurn {
@@ -759,6 +762,34 @@ model AgentRuntimeTurn {
   createdAt DateTime @default(now())
 
   session AgentRuntimeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+// ─── Live sessions (P6.C7 — realtime performance / WebRTC path) ────────────
+// A LiveSession is the LOW-LATENCY realtime surface, kept fully SEPARATE from
+// the offline rendering loop (twins/captures/performances/renders/artifacts
+// never touch this table). It binds optionally to a Twin and optionally to a
+// C6 AgentRuntimeSession; consent is REQUIRED (consentGrantId is non-null — a
+// live session cannot open without a grant covering live performance, which
+// is the embodiment scope: driving a twin's live performance IS realtime
+// embodiment; the frozen ConsentScope union is deliberately not widened).
+// status: connecting (offer/answer exchange in progress) | live (peer
+// connected) | ended (explicit teardown, idempotent) | failed (honest
+// connection failure). signaling holds the RELAYED WebRTC signaling state +
+// the bounded live state-event stream as JSON (see lib/you/live/live-core.ts).
+model LiveSession {
+  id              String    @id @default(cuid())
+  tenantId        String
+  twinId          String? // optional twin binding (human-driven live performance)
+  agentSessionId  String? // optional binding to a C6 agent session (agent-driven live state)
+  consentGrantId  String // REQUIRED — the grant covering live performance (provenance, re-checked on state writes)
+  status          String    @default("connecting") // connecting | live | ended | failed
+  signaling       String    @default("{}") // JSON: LiveSignalingState (phase, offer/answer/candidates, state events)
+  createdAt       DateTime  @default(now())
+  endedAt         DateTime?
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  twin         Twin?                 @relation(fields: [twinId], references: [id])
+  agentSession AgentRuntimeSession?  @relation(fields: [agentSessionId], references: [id])
 }
 
 // ─── Usage metering ─────────────────────────────────────────────────────────

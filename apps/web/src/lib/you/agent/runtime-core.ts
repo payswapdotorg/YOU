@@ -610,6 +610,16 @@ export interface TurnEngineDeps {
   /** epoch-ms clock (tests inject a fixed clock for event timestamps). */
   now: () => number;
   uuid: () => string;
+  /**
+   * P6.C7 EXTENSION (optional, backward-compatible — extend never break):
+   * called with each performance event AS IT IS EMITTED (thinking → tool_use
+   * → thinking → speaking), before the turn completes — the engine AWAITS it
+   * so live pushes stay ordered (no read-modify-write races between events).
+   * The live runtime uses this to stream agent states into bound live
+   * sessions (the low-latency path). Absent/throwing callbacks never break
+   * the turn (best-effort law).
+   */
+  onEvent?: (event: AgentPerformanceEvent) => void | Promise<void>;
 }
 
 export interface TurnEngineInput {
@@ -686,6 +696,19 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
   ];
 
   const events: AgentPerformanceEvent[] = [];
+  // P6.C7: broadcast each event as it is emitted (live streaming hook —
+  // AWAITED so pushes stay ordered; best-effort: a throwing callback is
+  // swallowed, the durable turn record is truth)
+  const emit = async (event: AgentPerformanceEvent): Promise<void> => {
+    events.push(event);
+    if (deps.onEvent) {
+      try {
+        await deps.onEvent(event);
+      } catch {
+        /* best-effort law — the durable turn record is truth, not the live push */
+      }
+    }
+  };
   const toolCtx = {
     tenantId: input.tenantId,
     sessionId: input.sessionId,
@@ -702,7 +725,7 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
   totalLatencyMs += completion.latencyMs;
   lastModel = completion.model;
 
-  events.push({
+  await emit({
     eventId: deps.uuid(),
     sessionId: input.sessionId,
     type: 'thinking',
@@ -745,7 +768,7 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
     toolExecutions.push(execution);
 
     const resultJson = cappedJson(execution.result, 2400);
-    events.push({
+    await emit({
       eventId: deps.uuid(),
       sessionId: input.sessionId,
       type: 'tool_use',
@@ -794,7 +817,7 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
     lastModel = followUp.model;
     reply = followUp.content;
 
-    events.push({
+    await emit({
       eventId: deps.uuid(),
       sessionId: input.sessionId,
       type: 'thinking',
@@ -813,7 +836,7 @@ export async function runAgentTurnEngine(deps: TurnEngineDeps, input: TurnEngine
     });
   }
 
-  events.push({
+  await emit({
     eventId: deps.uuid(),
     sessionId: input.sessionId,
     type: 'speaking',
