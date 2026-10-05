@@ -43,7 +43,12 @@ const STAGE_SOUL: Record<string, string> = {
   'lab-qa-1': 'soul-two-deep',
 };
 
-function compileFromGenome(
+/**
+ * Compile ONE organization from a genome (P6.C10: exported — the lab.mutate
+ * executor's two-org benchmark path compiles the parent and the offspring
+ * directly, without the three-baseline scaffolding).
+ */
+export function compileFromGenome(
   genome: PipelineGenome,
   origin: OrganizationDescriptor['origin'],
   organizationId: string,

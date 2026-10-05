@@ -9,7 +9,10 @@
 // `parameters.mutations` so search lineage stays auditable.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { PipelineGenome } from '../contracts';
-import { makeRng, round } from './determinism';
+// P6.C10: the runtime import carries the .ts extension so the pure module is
+// node:test-importable (the runtime-core precedent; tsc-legal via
+// allowImportingTsExtensions) — the type-only import above stays erased.
+import { makeRng, round } from './determinism.ts';
 
 const SYMBOLIC_SUFFIXES = ['-fine', '-coarse', '-v2'] as const;
 

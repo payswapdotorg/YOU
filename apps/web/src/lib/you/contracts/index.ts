@@ -679,9 +679,76 @@ export interface PromotionRecordView {
   pipelineId: string;
   fromStatus: string;
   toStatus: string;
-  decision: 'promoted' | 'rejected' | 'reverted' | 'drafted';
+  decision: 'promoted' | 'rejected' | 'reverted' | 'drafted' | 'retired'; // P6.C10: 'retired'
   evidence: Record<string, unknown>;
+  /** P6.C10: server-derived actor label (user:<id> | application:<keyId>) — caller-supplied labels are refused. */
+  decidedBy: string;
   createdAt: string;
+}
+
+// ─── P6.C10 — Lab productionization: the promotion-lifecycle surface ─────────
+// Additive view types (the B5 contracts precedent). The frozen repo-root
+// contracts/ directory is untouched; these describe what the lab routes
+// return and what the Labs view renders.
+
+export type LabGateVerdict = 'pass' | 'fail' | 'manual';
+
+/** One gate check inside a promotion evaluation (the verdict + its evidence). */
+export interface LabGateVerdictView {
+  gate: string;
+  verdict: LabGateVerdict;
+  note: string | null;
+  actual: number | boolean | string | null;
+}
+
+export interface LabReplayVerdictView {
+  deterministic: boolean;
+  runsCompared: number;
+  reason: string;
+}
+
+export interface LabCanaryWindowView {
+  runIds: string[];
+  spanMs: number | null;
+  countOk: boolean;
+  spanOk: boolean;
+  allReproducible: boolean;
+  gatesOk: boolean;
+}
+
+export interface LabPromotionEvaluationView {
+  pass: boolean;
+  reason: string;
+  target: string;
+  runIds: string[];
+  gates: { gates: LabGateVerdictView[] } | null;
+  replay: LabReplayVerdictView | null;
+  canary: LabCanaryWindowView | null;
+  blockingFailures: Array<{ id: string; region: string | null; suspectedCause: string }>;
+}
+
+export interface LabPipelineGatesView {
+  pipeline: PipelineCandidateView;
+  status: PipelineCandidateView['status'];
+  target: PipelineCandidateView['status'] | null;
+  requirement: { label: string; detail: string } | null;
+  succeededRunIds: string[];
+  promotionCount: number;
+  evaluation: LabPromotionEvaluationView | null;
+  note?: string;
+}
+
+export interface LabPromoteResponse {
+  promotion: PromotionRecordView;
+  pipeline: PipelineCandidateView;
+  evaluation?: LabPromotionEvaluationView;
+}
+
+export interface LabMutateResponse {
+  jobId: string;
+  mutationSeed: number;
+  worldSeed: number;
+  objectiveCode: string;
 }
 
 // ─── Solution Artifacts (ADR-0004: review surface, never authority) ─────────
@@ -855,6 +922,10 @@ export interface EvidenceRequestView {
   expectedSignal: string;
   scope: string;
   status: 'open' | 'fulfilled' | 'expired';
+  /** P6.C10: who created the request — a human/operator ('manual') or the Lab's Capture Scientist ('lab'). */
+  source: 'manual' | 'lab';
+  /** P6.C10: the FailureCase the Lab derived this request from (source='lab' only). */
+  originFailureId?: string | null;
   createdAt: string;
 }
 

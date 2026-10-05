@@ -8,7 +8,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  ArrowRight, ChevronDown, Dna, FlaskConical, AlertTriangle, GitBranch, Loader2, Play,
+  ArrowRight, ChevronDown, Dna, FlaskConical, AlertTriangle, GitBranch, Loader2, Microscope, Play,
   Plus, RefreshCcw, Repeat, ScrollText, Trophy, Ban, RotateCcw, FilePlus2, ListChecks,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -40,9 +40,12 @@ import { GenomeViewer } from '@/components/you/lab/genome-viewer';
 import { BenchmarkRunResults } from '@/components/you/lab/run-results';
 import { JobSteps } from '@/components/you/lab/job-steps';
 import { QueryError, RowSkeletons } from '@/components/you/build/confidence';
+import {
+  GenomeLineage, MutateAction, PromotionActions, ScientistTab,
+} from '@/components/you/lab/promotion-panel';
 import { cn } from '@/lib/utils';
 
-const TABS = ['objectives', 'technologies', 'pipelines', 'benchmarks', 'failures', 'promotions'] as const;
+const TABS = ['objectives', 'technologies', 'pipelines', 'benchmarks', 'failures', 'promotions', 'scientist'] as const;
 type LabTab = (typeof TABS)[number];
 
 const ORIGIN_BADGES: Record<string, string> = {
@@ -67,13 +70,14 @@ const SOURCE_BADGES: Record<string, string> = {
 };
 
 const DECISION_ICONS: Record<string, typeof Trophy> = {
-  promoted: Trophy, rejected: Ban, reverted: RotateCcw, drafted: FilePlus2,
+  promoted: Trophy, rejected: Ban, reverted: RotateCcw, drafted: FilePlus2, retired: Ban,
 };
 const DECISION_BADGES: Record<string, string> = {
   promoted: 'border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400',
   rejected: 'border-red-500/30 bg-red-500/12 text-red-700 dark:text-red-400',
   reverted: 'border-amber-500/30 bg-amber-500/12 text-amber-700 dark:text-amber-400',
   drafted: 'border-zinc-500/30 bg-zinc-500/12 text-zinc-600 dark:text-zinc-400',
+  retired: 'border-zinc-500/30 bg-zinc-500/12 text-zinc-600 dark:text-zinc-400',
 };
 
 function rel(iso?: string | null): string {
@@ -598,6 +602,9 @@ function PipelinesTab() {
                   <div className="border-t px-3.5 py-3.5">
                     <GenomeViewer genome={p.genome} />
                     <p className="mt-3 text-[11px] text-muted-foreground">Created {rel(p.createdAt)}</p>
+                    <PromotionActions pipeline={p} onChanged={() => void pipelines.refetch()} />
+                    <GenomeLineage pipeline={p} pipelines={pipelines.data ?? []} />
+                    <MutateAction pipeline={p} />
                   </div>
                 ) : null}
               </div>
@@ -741,6 +748,17 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
 function FailuresTab() {
   const failures = useQuery({ queryKey: ['lab-failures'], queryFn: () => api.lab.failures() });
 
+  // P6.C10 — the Capture Scientist: derive a targeted EvidenceRequest from a
+  // real failure (region → capability mapping, remediation-based capture
+  // instructions). Refusals (no region / unmapped region) are honest 400s.
+  const requestEvidence = useMutation({
+    mutationFn: (failureId: string) => api.lab.requestFailureEvidence(failureId, uid()),
+    onSuccess: () => {
+      toast.success('The Capture Scientist derived a targeted request — see the Scientist tab');
+    },
+    onError: (err) => toast.error(`Request refused — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
+  });
+
   return (
     <SectionCard
       title="Failure atlas"
@@ -778,6 +796,7 @@ function FailuresTab() {
                 <TableHead>Remediation</TableHead>
                 <TableHead>Run</TableHead>
                 <TableHead className="text-right">Recorded</TableHead>
+                <TableHead aria-label="actions" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -808,6 +827,21 @@ function FailuresTab() {
                     <TableCell className="max-w-52 text-xs text-muted-foreground">{f.remediation ?? '—'}</TableCell>
                     <TableCell>{f.benchmarkRunId ? <IdChip id={f.benchmarkRunId} label="run" /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{rel(f.createdAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm" variant="outline" className="h-7 gap-1.5 px-2.5 text-[11px]"
+                        disabled={requestEvidence.isPending && requestEvidence.variables === f.id}
+                        title={typeof f.inputConditions?.region === 'string' ? `Derive a targeted ${String(f.inputConditions.region)} evidence request` : 'this failure records no region — the Capture Scientist refuses to fabricate guidance'}
+                        onClick={() => requestEvidence.mutate(f.id)}
+                      >
+                        {requestEvidence.isPending && requestEvidence.variables === f.id ? (
+                          <Loader2 className="size-3 animate-spin" aria-hidden />
+                        ) : (
+                          <Microscope className="size-3" aria-hidden />
+                        )}
+                        Request evidence
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -826,10 +860,10 @@ function PromotionsTab() {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-300">
-        <span className="font-medium">Draft-only surface.</span> No production promotions exist yet — promotion is
-        evidence-driven and reversible (draft → benchmarked → validated → canary → production → retired) and requires
-        reproducibility, benchmark, rights/privacy/security and cost/latency evidence. Records below are real records,
-        none imply production status.
+        <span className="font-medium">Server-gated ladder.</span> Promotion transitions are machine-checked evidence — draft → benchmarked →
+        validated → canary → production (reversible; retiring is terminal) — enforced by the promotions API on real run
+        rows, never by this UI. Records below are real records with the server-derived decidedBy; lab evidence stays
+        simulated research truth, never production human truth.
       </div>
       <SectionCard title="Promotion records" description="Evidence-driven status transitions" icon={Trophy}>
         {promotions.isPending ? (
@@ -852,7 +886,7 @@ function PromotionsTab() {
             <div className="absolute bottom-2 left-[9px] top-2 w-px bg-border" aria-hidden />
             {promotions.data.map((p: PromotionRecordView) => {
               const Icon = DECISION_ICONS[p.decision] ?? FilePlus2;
-              const decidedBy = (p.evidence as { decidedBy?: unknown })?.decidedBy;
+              const decidedBy = p.decidedBy;
               return (
                 <div key={p.id} className="relative pb-5 last:pb-0">
                   <span className="absolute -left-6 top-0.5 flex size-[18px] items-center justify-center rounded-full border bg-card">
@@ -919,6 +953,7 @@ export function LabsView() {
           <TabsTrigger value="benchmarks">Benchmarks</TabsTrigger>
           <TabsTrigger value="failures">Failure Atlas</TabsTrigger>
           <TabsTrigger value="promotions">Promotions</TabsTrigger>
+          <TabsTrigger value="scientist">Scientist</TabsTrigger>
         </TabsList>
         <TabsContent value="objectives" className="mt-4">
           <ObjectivesTab
@@ -933,6 +968,7 @@ export function LabsView() {
         <TabsContent value="benchmarks" className="mt-4"><BenchmarksTab knownRunIds={knownRunIds} /></TabsContent>
         <TabsContent value="failures" className="mt-4"><FailuresTab /></TabsContent>
         <TabsContent value="promotions" className="mt-4"><PromotionsTab /></TabsContent>
+        <TabsContent value="scientist" className="mt-4"><ScientistTab /></TabsContent>
       </Tabs>
     </div>
   );
