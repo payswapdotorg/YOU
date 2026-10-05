@@ -46,5 +46,14 @@ import './artifact-completion.test.mjs';
 // modules + boots/reuses the shared app server; real broker submits, real
 // lab benchmark runs for the optimization evidence pairs)
 import './lab-cost-latency.test.mjs';
+// P6.C11 lab benchmark artifacts + Failure Atlas contract suite (pure unit
+// over the C11 zero-import contract cores — lab/run-manifest.ts +
+// lab/failure-codes.ts + lab/soul-swap.ts, composed with the real seeded
+// world + compiled organizations exactly as the lab.benchmark executor folds
+// them: write-once run manifests, run comparison + regression detection,
+// the failure-code taxonomy + atlas aggregation, the remediation lifecycle,
+// policy-decision honesty, the deterministic soul-swap scenario, and the
+// content-addressed artifact export; no app boot, no network, no db)
+import './lab-benchmark-atlas.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;

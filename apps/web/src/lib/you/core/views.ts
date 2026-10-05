@@ -351,6 +351,9 @@ export function benchmarkRunView(
     status: r.status as BenchmarkRunView['status'],
     organizations: parseJson<BenchmarkRunView['organizations']>(r.organizations, []),
     metrics: parseJson<Record<string, unknown> | null>(r.metrics, null),
+    // P6.C11: the write-once run manifest (null when the run predates manifests)
+    manifest: parseJson<Record<string, unknown> | null>(r.manifest ?? '{}', null),
+    rerunOfId: r.rerunOfId ?? null,
     reports: reports.map(evaluationReportView),
     createdAt: iso(r.createdAt),
   };
@@ -414,10 +417,19 @@ export function failureCaseView(f: FailureCase): FailureCaseView {
     id: f.id,
     benchmarkRunId: f.benchmarkRunId,
     organizationId: f.organizationId,
+    // P6.C11: taxonomy v1 code + structured payload + lifecycle + audit + policy
+    code: f.code ?? 'UNCLASSIFIED',
     inputConditions: parseJson<Record<string, unknown>>(f.inputConditions, {}),
+    payload: parseJson<Record<string, unknown>>(f.payload ?? '{}', {}),
     suspectedCause: f.suspectedCause,
     confidence: f.confidence,
     remediation: f.remediation,
+    status: (f.status ?? 'open') as FailureCaseView['status'],
+    remediationLog: parseJson<FailureCaseView['remediationLog']>(f.remediationLog ?? '[]', []),
+    policyDecision: parseJson<FailureCaseView['policyDecision']>(f.policyDecision ?? '{}', {
+      taxonomyVersion: 1,
+      decisions: [],
+    }),
     createdAt: iso(f.createdAt),
   };
 }

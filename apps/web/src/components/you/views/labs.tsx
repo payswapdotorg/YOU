@@ -9,7 +9,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import {
   ArrowRight, ChevronDown, Dna, FlaskConical, AlertTriangle, GitBranch, Loader2, Play,
-  Plus, RefreshCcw, Repeat, ScrollText, Trophy, Ban, RotateCcw, FilePlus2, ListChecks,
+  Plus, RefreshCcw, Repeat, ScrollText, Trophy, Ban, RotateCcw, FilePlus2, ListChecks, FileDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, uid, YouApiError } from '@/lib/you/client/api';
@@ -39,6 +39,9 @@ import { ApiErrorSurface, useApiErrorSurface } from '@/components/you/shared/deg
 import { GenomeViewer } from '@/components/you/lab/genome-viewer';
 import { BenchmarkRunResults } from '@/components/you/lab/run-results';
 import { JobSteps } from '@/components/you/lab/job-steps';
+// P6.C11 — run comparison + atlas browser (Labs view additions)
+import { RunComparePanel } from '@/components/you/lab/run-compare';
+import { AtlasBrowser } from '@/components/you/lab/atlas-browser';
 import { QueryError, RowSkeletons } from '@/components/you/build/confidence';
 import { cn } from '@/lib/utils';
 
@@ -715,7 +718,7 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
       </SectionCard>
 
       {selected ? (
-        <SectionCard title="Run detail" description="Selected benchmark run" icon={Repeat}>
+        <SectionCard title="Run detail" description="Selected benchmark run + comparison against a baseline (P6.C11)" icon={Repeat}>
           {selectedRun.isPending ? (
             <div className="space-y-3">
               <Skeleton className="h-8 w-2/3" />
@@ -729,7 +732,20 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
               title="Could not load run"
             />
           ) : selectedRun.data ? (
-            <BenchmarkRunResults run={selectedRun.data} />
+            <div className="space-y-4">
+              <BenchmarkRunResults run={selectedRun.data} />
+              <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                <a
+                  href={`/api/v1/lab/runs/${selectedRun.data.id}/artifact`}
+                  download={`you-benchmark-run-${selectedRun.data.id}.json`}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+                >
+                  <FileDown className="size-3.5" aria-hidden /> Download artifact (JSON, sha256-addressed)
+                </a>
+                <RerunButton run={selectedRun.data} />
+              </div>
+              <RunComparePanel run={selectedRun.data} knownRuns={runs.data ?? []} />
+            </div>
           ) : null}
         </SectionCard>
       ) : null}
@@ -737,84 +753,51 @@ function BenchmarksTab({ knownRunIds }: { knownRunIds: string[] }) {
   );
 }
 
-// ─── Failures tab ────────────────────────────────────────────────────────────
-function FailuresTab() {
-  const failures = useQuery({ queryKey: ['lab-failures'], queryFn: () => api.lab.failures() });
+// ─── Re-run button (P6.C11: re-runs are NEW runs referencing their parent —
+// the write-once law; never a mutation of the completed run) ────────────────
+function RerunButton({ run }: { run: BenchmarkRunView }) {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const rerun = useMutation({
+    mutationFn: () => api.lab.run({ objectiveCode: run.objectiveCode, worldSeed: run.worldSeed, rerunOf: run.id }, uid()),
+    onSuccess: (res) => {
+      setJobId(res.jobId);
+      toast.success('Re-run queued — a NEW run referencing its parent (the original stays immutable)');
+    },
+    onError: (err) => toast.error(`Re-run failed — ${err instanceof YouApiError ? describeApiError(err) : 'request failed'}`),
+  });
+  const { job, done, succeeded } = useJob(jobId);
 
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        size="sm" variant="outline" className="h-8 gap-1.5 text-xs"
+        disabled={rerun.isPending || run.status !== 'succeeded'}
+        onClick={() => rerun.mutate()}
+        title={run.status !== 'succeeded' ? 'Only completed runs can be re-run' : `Re-run on seed ${run.worldSeed} — new run, parent stays immutable`}
+      >
+        {rerun.isPending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Repeat className="size-3.5" aria-hidden />}
+        Re-run on seed {run.worldSeed}
+      </Button>
+      {jobId ? (
+        <span className={cn('text-[11px]', done ? (succeeded ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground')}>
+          {done ? (succeeded ? 're-run complete — refresh the list' : 're-run failed — see job') : 're-run in progress…'}
+        </span>
+      ) : null}
+      {job ? <span className="sr-only">{JSON.stringify(job.output)}</span> : null}
+    </div>
+  );
+}
+
+// ─── Failures tab (P6.C11: the AtlasBrowser — aggregate table + drill-down +
+// remediation lifecycle actions) ─────────────────────────────────────────────
+function FailuresTab() {
   return (
     <SectionCard
       title="Failure atlas"
-      description="Every repeatable failure with input conditions, suspected cause, confidence and remediation (LAB_DESIGN.md)"
+      description="Aggregation by taxonomy code, drill-down to the real recorded cases, and the remediation lifecycle open → mitigated → verified (LAB_DESIGN.md)"
       icon={AlertTriangle}
-      actions={
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => failures.refetch()} disabled={failures.isRefetching}>
-          <RefreshCcw className={failures.isRefetching ? 'size-3.5 animate-spin' : 'size-3.5'} aria-hidden /> Refresh
-        </Button>
-      }
     >
-      {failures.isPending ? (
-        <div className="space-y-2.5">{[0, 1].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-      ) : failures.isError ? (
-        <QueryError
-          error={failures.error}
-          compact
-          onRetry={() => void failures.refetch()}
-          title="Could not load failure cases"
-        />
-      ) : !failures.data?.length ? (
-        <EmptyState
-          icon={AlertTriangle}
-          title="No failure cases recorded"
-          hint="Failures from benchmark runs are catalogued here with the exact conditions that reproduce them."
-        />
-      ) : (
-        <div className="max-h-[520px] you-scroll overflow-y-auto rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 bg-card">
-              <TableRow>
-                <TableHead>Input conditions</TableHead>
-                <TableHead>Suspected cause</TableHead>
-                <TableHead className="w-28">Confidence</TableHead>
-                <TableHead>Remediation</TableHead>
-                <TableHead>Run</TableHead>
-                <TableHead className="text-right">Recorded</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {failures.data.map((f: FailureCaseView) => {
-                const pct = f.confidence <= 1 ? Math.round(f.confidence * 100) : Math.round(f.confidence);
-                const conditions = Object.entries(f.inputConditions ?? {});
-                return (
-                  <TableRow key={f.id}>
-                    <TableCell className="max-w-52">
-                      <div className="truncate font-mono text-[11px] text-muted-foreground" title={JSON.stringify(f.inputConditions)}>
-                        {conditions.length
-                          ? conditions.slice(0, 2).map(([k, v]) => `${k}=${fmtVal(v)}`).join(' · ') + (conditions.length > 2 ? ` +${conditions.length - 2}` : '')
-                          : '—'}
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-52 text-xs">{f.suspectedCause}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <div className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className={cn('h-full rounded-full', pct >= 70 ? 'bg-red-500' : pct >= 40 ? 'bg-amber-500' : 'bg-zinc-400')}
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
-                        <span className="you-num font-mono text-[11px]">{pct}%</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-52 text-xs text-muted-foreground">{f.remediation ?? '—'}</TableCell>
-                    <TableCell>{f.benchmarkRunId ? <IdChip id={f.benchmarkRunId} label="run" /> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">{rel(f.createdAt)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+      <AtlasBrowser />
     </SectionCard>
   );
 }

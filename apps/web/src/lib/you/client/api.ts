@@ -3,10 +3,10 @@
 import type {
   AgentAvatarSessionView, AgentBodyView, AgentSoulView, ApiKeySecret, ApiKeyView,
   BenchmarkRunView, CaptureSessionView, ConsentGrantView, EventRecordView,
-  EvidenceAssetView, EvidenceRequestView, FailureCaseView, FeedbackRequestView,
+  EvidenceAssetView, EvidenceRequestView, FailureAtlasView, FailureCaseView, FeedbackRequestView,
   F1ConsentStatements, F1EvidenceManifest, F1ReviewState, F1StepCheckpoint,
   JobView, LabObjectiveView, OverviewStats, PerformanceView, PipelineCandidateView,
-  PromotionRecordView, RenderJobView, RenderStyle, SessionInfo, SolutionArtifactView,
+  PromotionRecordView, RenderJobView, RenderStyle, RunCompareView, SessionInfo, SolutionArtifactView,
   TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary, CostUsageSection, OptimizationEvidenceView,
   WebhookEndpointView, ConsentScope, CaptureRegion,
 } from '../contracts';
@@ -561,9 +561,19 @@ export const api = {
     objectives: () => call<LabObjectiveView[]>('/lab/objectives'),
     createObjective: (body: { code: string; title: string; description: string }, idem?: string) =>
       call<LabObjectiveView>('/lab/objectives', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
-    run: (body: { objectiveCode: string; worldSeed?: number }, idem?: string) =>
-      call<{ jobId: string }>('/lab/runs', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
+    run: (body: { objectiveCode: string; worldSeed?: number; rerunOf?: string }, idem?: string) =>
+      call<{ jobId: string; benchmarkRunId?: string; replayed?: boolean }>('/lab/runs', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     getRun: (id: string) => call<BenchmarkRunView>(`/lab/runs/${id}`),
+    // P6.C11 — run comparison + regression detection (same world seed required).
+    compareRun: (id: string, baseline: string, thresholds: Record<string, number> = {}) =>
+      call<RunCompareView>(`/lab/runs/${id}/compare${qs({ baseline, ...thresholds })}`),
+    // P6.C11 — Failure Atlas aggregation (by code/region/pipeline/technology
+    // version/time window over real recorded cases only).
+    failureAtlas: (params: { from?: string; to?: string; topCauses?: number } = {}) =>
+      call<FailureAtlasView>(`/lab/failures/atlas${qs(params)}`),
+    // P6.C11 — remediation lifecycle (open → mitigated → verified).
+    remediate: (id: string, body: { action: 'mitigate' | 'verify'; evidence: string; note?: string }, idem?: string) =>
+      call<FailureCaseView>(`/lab/failures/${id}/remediate`, { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     technologies: () => call<TechnologyCandidateView[]>('/lab/technologies'),
     pipelines: () => call<PipelineCandidateView[]>('/lab/pipelines'),
     failures: () => call<FailureCaseView[]>('/lab/failures'),

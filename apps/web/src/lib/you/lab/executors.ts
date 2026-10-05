@@ -87,11 +87,29 @@ import {
   buildTwinCompileSections,
 } from '../core/artifact-sections';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
-import { evaluateOrganizations } from './benchmark';
+import { evaluateOrganizations, groundingCall } from './benchmark';
 import { cachedCompileOrganizations, cachedGenerateWorld } from './hot-path-cache';
 import { generateWorld } from './world';
 import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, routedRenderProvider, embeddedComputeRoutingOf, type ComputeQuote, type ComputeSubmission } from './compute';
-import { recordRegionFailures } from './failure-atlas';
+import { recordClassifiedFailureCase, recordRegionFailures } from './failure-atlas';
+// P6.C11 — benchmark artifacts + Failure Atlas production surface: the
+// write-once run manifest, the run-comparison/regression contract, the
+// soul-swap scenario (SOUL-SWAP-001) and the failure-code taxonomy.
+import {
+  buildRunManifest,
+  resolveWriteOnceTarget,
+  type LabScenario,
+} from './run-manifest';
+import {
+  classifyGroundingFailure,
+  classifySoulSwapCapabilityLoss,
+  classifySoulSwapDrift,
+} from './failure-codes';
+import {
+  SOUL_SWAP_OBJECTIVE_CODE,
+  deriveSoulSwapFailureInputs,
+  evaluateSoulSwap,
+} from './soul-swap';
 import { hashString, makeRng } from './determinism';
 // P6.C8 — virtual try-on: the provider-neutral adapter contract + pure
 // pipeline fold (adapters/try-on.ts). The executor composes it with the real
@@ -1895,7 +1913,9 @@ registerExecutor({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// lab.benchmark — the HUMAN-RECON-001 harness
+// lab.benchmark — the benchmark harness (P6.C11: TWO scenarios —
+// HUMAN-RECON-001 reconstruction + SOUL-SWAP-001 identity preservation),
+// with the write-once run manifest and the coded failure atlas.
 // ═══════════════════════════════════════════════════════════════════════════
 
 registerExecutor({
@@ -1917,8 +1937,9 @@ registerExecutor({
       ['world', `Generate deterministic world (seed ${worldSeed})`],
       ['compile', 'Compile organizations (generalist / hand-designed / searched)'],
       ['evaluate', `Evaluate on seeded world (${evaluationMode} org evaluation, deterministic simulation + real grounding calls)`],
-      ['persist', 'Persist BenchmarkRun + EvaluationReports'],
-      ['failures', 'Record failure-atlas entries'],
+      ['manifest', 'Build the write-once run manifest'],
+      ['persist', 'Persist BenchmarkRun (immutably) + EvaluationReports'],
+      ['failures', 'Record failure-atlas entries (taxonomy v1 codes)'],
       ['promotion', 'Draft promotion record for best organization'],
     ]);
 
@@ -1980,14 +2001,107 @@ registerExecutor({
     await ctx.report({ steps: steps.all(), progress: 0.4 });
 
     await ctx.report({ steps: steps.running('evaluate'), progress: 0.45 });
-    const { evaluations, aggregate, llmCalls, evaluation } = await evaluateOrganizations(world, organizations, {
-      mode: evaluationMode,
-    });
+    // P6.C11: scenario dispatch — HUMAN-RECON-001 (reconstruction) or
+    // SOUL-SWAP-001 (identity preservation across soul swaps). Both share the
+    // identical honesty model (deterministic sim + ONE real grounding call
+    // per organization, every number labeled modeled/observed).
+    //
+    // MERGE UNION (C11 × C12): the human-recon path keeps C12's evaluation
+    // mode wiring — { mode: evaluationMode } flows into evaluateOrganizations
+    // and its returned EvaluationStats (mode + observed wall-clock + per-org
+    // latencies) persists below in the costLatency evidence. The soul-swap
+    // path (added by C11 on the pre-C12 base) has no EvaluationStats of its
+    // own, so it measures its own wall-clock and emits the SAME stats shape
+    // — honestly labeled 'sequential', which is literally how
+    // evaluateSoulSwap runs its per-org loop — so the C12 cost/latency
+    // evidence records for BOTH scenarios. Neither side's numbers are lost.
+    const isSoulSwap = objective.code === SOUL_SWAP_OBJECTIVE_CODE;
+    const scenario: LabScenario = isSoulSwap ? 'soul-swap-001' : 'human-recon-001';
+    const { evaluations, aggregate, llmCalls, evaluation } = isSoulSwap
+      ? await (async () => {
+          const soulSwapStartedAt = Date.now();
+          const result = await evaluateSoulSwap(world, organizations, groundingCall);
+          return {
+            ...result,
+            evaluation: {
+              mode: 'sequential' as const,
+              wallClockMs: Date.now() - soulSwapStartedAt,
+              perOrgLatencyMs: result.evaluations.map((e) => e.scores.latencyMs),
+            },
+          };
+        })()
+      : await evaluateOrganizations(world, organizations, { mode: evaluationMode });
     steps.done(
       'evaluate',
-      `best: ${aggregate.bestOrganizationId} (grounding calls: ${llmCalls} real; ${evaluationMode} wall-clock ${evaluation.wallClockMs}ms)`
+      `${isSoulSwap ? 'soul-swap' : 'human-recon'} — best: ${aggregate.bestOrganizationId} (grounding calls: ${llmCalls} real; ${evaluation.mode} wall-clock ${evaluation.wallClockMs}ms)`
     );
     await ctx.report({ steps: steps.all(), progress: 0.7 });
+
+    // ── P6.C11: the write-once run manifest ────────────────────────────────
+    await ctx.report({ steps: steps.running('manifest'), progress: 0.72 });
+    // WRITE-ONCE LAW (resolveWriteOnceTarget): a TERMINAL run (succeeded/
+    // failed) is never mutated — a re-run of it targets a NEW row carrying
+    // rerunOf = the original id.
+    const existingRow = benchmarkRunId
+      ? await db.benchmarkRun.findUnique({ where: { id: benchmarkRunId } })
+      : null;
+    const writeOnce = resolveWriteOnceTarget({
+      benchmarkRunId: benchmarkRunId ?? null,
+      existingStatus: existingRow ? existingRow.status : null,
+      rerunOfFromInput: optString(input, 'rerunOf') ?? null,
+    });
+    const rerunOfId = writeOnce.rerunOfId;
+    const targetRunId = writeOnce.targetRunId;
+    const manifest = buildRunManifest({
+      objectiveCode,
+      scenario,
+      worldSeed,
+      worldId: world.worldId,
+      rerunOf: rerunOfId,
+      genomes: [
+        {
+          pipelineId: pipelines.generalist.id,
+          name: pipelines.generalist.name,
+          generation: pipelineRows.generalist.generation,
+          origin: 'generalist',
+          genome: pipelines.generalist.genome,
+        },
+        {
+          pipelineId: pipelines.handDesigned.id,
+          name: pipelines.handDesigned.name,
+          generation: pipelineRows.handDesigned.generation,
+          origin: 'hand-designed',
+          genome: pipelines.handDesigned.genome,
+        },
+        {
+          pipelineId: pipelines.searched.id,
+          name: pipelines.searched.name,
+          generation: pipelineRows.searched.generation,
+          origin: 'searched',
+          genome: pipelines.searched.genome,
+        },
+      ],
+      organizations: organizations.map((o) => {
+        const ev = evaluations.find((e) => e.organizationId === o.descriptor.organizationId);
+        const g = (ev?.detail as Record<string, unknown> | undefined)?.groundingCall as
+          | { real: boolean; model: string | null }
+          | undefined;
+        return {
+          organizationId: o.descriptor.organizationId,
+          origin: o.descriptor.origin,
+          pipelineId: o.descriptor.pipelineId ?? '',
+          grounding: { real: g?.real ?? false, model: g?.model ?? null },
+        };
+      }),
+      environment: {
+        runtime: {
+          node: (process.versions.node as string | undefined) ?? null,
+          bun: (process.versions.bun as string | undefined) ?? null,
+        },
+      },
+    });
+    steps.done('manifest', `${manifest.manifestType} v${manifest.schemaVersion}${rerunOfId ? ` (rerun of ${rerunOfId})` : ''}`);
+    await ctx.report({ steps: steps.all(), progress: 0.74 });
 
     await ctx.report({ steps: steps.running('persist'), progress: 0.75 });
     const now = new Date();
@@ -1996,6 +2110,8 @@ registerExecutor({
       worldSeed,
       status: 'succeeded',
       organizations: JSON.stringify(organizations.map((o) => o.descriptor)),
+      manifest: JSON.stringify(manifest),
+      ...(rerunOfId ? { rerunOfId } : {}),
       metrics: JSON.stringify({
         simulated: true,
         simulationNote:
@@ -2049,8 +2165,11 @@ registerExecutor({
       }),
       finishedAt: now,
     };
-    const run = benchmarkRunId
-      ? await db.benchmarkRun.update({ where: { id: benchmarkRunId }, data: { ...runData, startedAt: now } })
+    // P6.C11 write-once: only a NON-terminal run row (its own queued row) is
+    // filled in; anything else — including a re-run of a terminal run — is a
+    // NEW BenchmarkRun row referencing its parent via rerunOfId.
+    const run = targetRunId
+      ? await db.benchmarkRun.update({ where: { id: targetRunId }, data: { ...runData, startedAt: now } })
       : await db.benchmarkRun.create({ data: { ...runData, startedAt: now } });
     for (const ev of evaluations) {
       await db.evaluationReport.create({
@@ -2068,8 +2187,83 @@ registerExecutor({
     await ctx.report({ steps: steps.all(), progress: 0.85 });
 
     await ctx.report({ steps: steps.running('failures'), progress: 0.88 });
-    const failureIds = await recordRegionFailures(db, run.id, worldSeed, evaluations);
-    steps.done('failures', `${failureIds.length} failure cases`);
+    const failureIds: string[] = [];
+    if (isSoulSwap) {
+      // SOUL-SWAP-001 failures — derived from the REAL sim output only
+      // (bodies below the capability floor, orgs above the drift ceiling).
+      // (The dispatch above produced SoulSwapEvaluation[] here — the harness
+      // union is structurally narrowed by the scenario check.)
+      const soulEvaluations = evaluations as unknown as Array<{
+        organizationId: string;
+        scores: { drift: number };
+        detail: Record<string, unknown>;
+      }>;
+      for (const ev of soulEvaluations) {
+        for (const f of deriveSoulSwapFailureInputs(ev, worldSeed)) {
+          const classified =
+            f.kind === 'capability-loss'
+              ? classifySoulSwapCapabilityLoss(f.input as Parameters<typeof classifySoulSwapCapabilityLoss>[0])
+              : classifySoulSwapDrift(f.input as Parameters<typeof classifySoulSwapDrift>[0]);
+          const rec = await recordClassifiedFailureCase(db, {
+            benchmarkRunId: run.id,
+            organizationId: ev.organizationId,
+            inputConditions: {
+              simulated: true,
+              scenario: 'soul-swap-001',
+              worldSeed,
+              ...f.input,
+              note: 'Lab simulation conditions — simulated research truth, not production human truth',
+            },
+            classified,
+            suspectedCause:
+              f.kind === 'capability-loss'
+                ? `Post-swap capability fit fell below the retention floor for the "${String(f.input.role)}" body (soul ${String(f.input.canonicalSoul)} → ${String(f.input.swappedSoul)}, fit ${String(f.input.fit)}) — the swapped soul does not carry the capabilities the stage demands.`
+                : `Post-swap behavioral drift ${String(f.input.drift)} exceeded the ${String(f.input.driftCeiling)} ceiling under the world's noise conditions — soul depth mismatch compounds with sensor noise.`,
+            confidence: f.kind === 'capability-loss' ? 0.75 : 0.65,
+            remediation:
+              f.kind === 'capability-loss'
+                ? 'Rebind the deep soul to the deliberative stage (or re-compile the organization) and re-benchmark the swap policy on the same seed.'
+                : 'Constrain soul swaps to same-depth souls for this genome, or re-benchmark with a lower-noise world seed.',
+          });
+          failureIds.push(rec.id);
+        }
+      }
+    } else {
+      // HUMAN-RECON-001 failures — uncaptured regions (REGION_UNCAPTURED).
+      const regionIds = await recordRegionFailures(db, run.id, worldSeed, evaluations);
+      failureIds.push(...regionIds);
+    }
+    // PROVIDER_GROUNDING_FAILED — real observed failures only: a grounding
+    // call that actually failed degrades the score to modeled-only.
+    for (const ev of evaluations) {
+      const g = (ev.detail as Record<string, unknown>).groundingCall as
+        | { real: boolean; model: string | null; error: string | null }
+        | undefined;
+      if (g && !g.real) {
+        const rec = await recordClassifiedFailureCase(db, {
+          benchmarkRunId: run.id,
+          organizationId: ev.organizationId,
+          inputConditions: {
+            simulated: true,
+            scenario,
+            worldSeed,
+            organizationId: ev.organizationId,
+            note: 'The provider grounding call failed during evaluation — the latency score degraded honestly to modeled-only (no fabricated measurement)',
+          },
+          classified: classifyGroundingFailure({
+            provider: 'zai',
+            model: g.model,
+            error: g.error ?? 'unknown error',
+          }),
+          technologyVersions: manifest.technologyVersions,
+          suspectedCause: `The real provider grounding call failed for organization ${ev.organizationId} (${g.error ?? 'unknown error'}) — provider unavailable or credentials invalid in this environment.`,
+          confidence: 0.9,
+          remediation: 'Check provider availability/credentials; re-run the benchmark to re-attempt the grounding measurement.',
+        });
+        failureIds.push(rec.id);
+      }
+    }
+    steps.done('failures', `${failureIds.length} failure cases (taxonomy v1)`);
     await ctx.report({ steps: steps.all(), progress: 0.92 });
 
     await ctx.report({ steps: steps.running('promotion'), progress: 0.95 });
@@ -2103,10 +2297,12 @@ registerExecutor({
 
     await emitEvent(ctx.tenantId, 'lab.benchmark.succeeded', 'benchmarkRun', run.id, {
       objectiveCode,
+      scenario,
       worldSeed,
       bestOrganizationId: aggregate.bestOrganizationId,
       organizations: organizations.map((o) => o.descriptor.organizationId),
       llmCalls,
+      ...(rerunOfId ? { rerunOf: rerunOfId } : {}),
       simulated: true,
     });
     await recordLlmCalls(ctx.tenantId, llmCalls, { jobKind: 'lab.benchmark', benchmarkRunId: run.id });
@@ -2115,6 +2311,8 @@ registerExecutor({
     return {
       output: {
         benchmarkRunId: run.id,
+        ...(rerunOfId ? { rerunOf: rerunOfId } : {}),
+        scenario,
         organizations: organizations.map((o) => o.descriptor),
         bestOrganizationId: aggregate.bestOrganizationId,
         ranking: aggregate.ranking,

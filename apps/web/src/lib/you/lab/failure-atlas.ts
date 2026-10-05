@@ -2,13 +2,28 @@
 // Failure Atlas (Worker C lane) — docs/LAB_DESIGN.md:
 // "Store every repeatable failure with input conditions, pipeline, technology
 //  versions, artifacts, suspected cause, confidence and remediation."
+//
+// P6.C11: every recorded case now carries the typed failure CODE (taxonomy
+// v1 — lib/you/lab/failure-codes.ts), its structured PAYLOAD, the remediation
+// lifecycle fields (status + audit log) and the recorded POLICY DECISIONS
+// (enforced vs proposed, with basis) for its class.
 // ═══════════════════════════════════════════════════════════════════════════
 import type { PrismaClient } from '@prisma/client';
+import {
+  classifyRegionFailure,
+  failureCodeDefinition,
+  policyDecisionsForCode,
+  type ClassifiedCase,
+} from './failure-codes';
 
 export interface FailureCaseInput {
   benchmarkRunId?: string | null;
   organizationId?: string | null;
+  /** taxonomy code (v1). Unknown codes are recorded UNCLASSIFIED — never guessed. */
+  code?: string;
   inputConditions: Record<string, unknown>;
+  /** structured payload per the taxonomy code's payloadFields */
+  payload?: Record<string, unknown>;
   pipeline?: Record<string, unknown>;
   technologyVersions?: unknown[];
   artifacts?: unknown[];
@@ -18,18 +33,39 @@ export interface FailureCaseInput {
 }
 
 export async function recordFailureCase(db: PrismaClient, input: FailureCaseInput): Promise<{ id: string }> {
+  const code = input.code && failureCodeDefinition(input.code).code === input.code ? input.code : 'UNCLASSIFIED';
   return db.failureCase.create({
     data: {
       benchmarkRunId: input.benchmarkRunId ?? null,
       organizationId: input.organizationId ?? null,
+      code,
       inputConditions: JSON.stringify(input.inputConditions),
+      payload: JSON.stringify(input.payload ?? {}),
       pipeline: JSON.stringify(input.pipeline ?? {}),
       technologyVersions: JSON.stringify(input.technologyVersions ?? []),
       artifacts: JSON.stringify(input.artifacts ?? []),
       suspectedCause: input.suspectedCause,
       confidence: input.confidence,
       remediation: input.remediation ?? null,
+      status: 'open',
+      remediationLog: '[]',
+      policyDecision: JSON.stringify({
+        taxonomyVersion: 1,
+        decisions: policyDecisionsForCode(code),
+      }),
     },
+  });
+}
+
+/** Record a pre-classified case (code + payload from a taxonomy classifier). */
+export async function recordClassifiedFailureCase(
+  db: PrismaClient,
+  input: Omit<FailureCaseInput, 'code' | 'payload'> & { classified: ClassifiedCase }
+): Promise<{ id: string }> {
+  return recordFailureCase(db, {
+    ...input,
+    code: input.classified.code,
+    payload: input.classified.payload,
   });
 }
 
@@ -43,7 +79,8 @@ export interface RegionFailureSummary {
 /**
  * Derive FailureCase rows from benchmark evaluations: regions that stayed
  * uncaptured for at least one organization under the world's noise/occlusion
- * conditions. Sorted worst-first, capped.
+ * conditions. Sorted worst-first, capped. P6.C11: each case is classified
+ * REGION_UNCAPTURED with its structured payload.
  */
 export async function recordRegionFailures(
   db: PrismaClient,
@@ -80,7 +117,13 @@ export async function recordRegionFailures(
   );
   const ids: string[] = [];
   for (const f of ranked.slice(0, max)) {
-    const rec = await recordFailureCase(db, {
+    const classified = classifyRegionFailure({
+      region: f.region,
+      regionDifficulty: f.difficulty,
+      occlusionPenalty: f.occlusionPenalty,
+      worldSeed,
+    });
+    const rec = await recordClassifiedFailureCase(db, {
       benchmarkRunId,
       inputConditions: {
         simulated: true,
@@ -88,8 +131,10 @@ export async function recordRegionFailures(
         region: f.region,
         regionDifficulty: f.difficulty,
         occlusionPenalty: f.occlusionPenalty,
+        failedOrganizations: [...f.failedOrganizations],
         note: 'Lab simulation conditions — simulated research truth, not production human truth',
       },
+      classified,
       suspectedCause:
         f.occlusionPenalty > 0.1
           ? `Region "${f.region}" was occluded in the seeded world (occlusion penalty ${f.occlusionPenalty}) and its capture difficulty (${f.difficulty}) exceeded the organizations' effective sensitivity thresholds.`
