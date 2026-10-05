@@ -18,3 +18,4 @@ TL: contracts, integration, security, promotion and release.
 
 ## Prototype deployment
 Vercel + Cloudflare Workers + Neon + Upstash + Cloudflare R2, with GPU execution behind the Compute Broker. Free tiers are bounded development/beta accelerators, never hard dependencies.
+> Deploy note 2026-10-05: Vercel project nodeVersion set to 22.x (fixes pnpm@10.0.0 x Node 24 install failures).
