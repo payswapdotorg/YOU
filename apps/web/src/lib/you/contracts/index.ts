@@ -901,6 +901,68 @@ export interface UsageSummary {
   totals: { evidenceMb: number; jobs: number; renders: number; llmCalls: number };
 }
 
+// ─── Cost budgets + optimization evidence (P6.C12 / PR-13) ──────────────────
+
+/** GET /api/v1/usage → cost section: budget status + accrual breakdowns. */
+export interface CostUsageSection {
+  basis: string;
+  budget: {
+    mode: 'limited' | 'unlimited';
+    source: 'db:application+pipeline' | 'db:application' | 'db:pipeline' | 'db:tenant' | 'env' | 'default';
+    budgetUsd: number | null;
+    periodHours: number;
+    periodStartedAt: string;
+    accruedUsd: number;
+    remainingUsd: number | null;
+    note: string;
+  };
+  byPipeline: { pipeline: string; quotedUsd: number; submits: number }[];
+  byApplication: { applicationActorId: string | null; quotedUsd: number; submits: number }[];
+  series: { day: string; quotedUsd: number; submits: number }[];
+  accrualMetric: string;
+}
+
+/** GET /api/v1/usage → one optimization's before/after evidence record. */
+export interface OptimizationEvidenceView {
+  id: 'parallel-org-evaluation' | 'deterministic-subresult-cache';
+  title: string;
+  kind: 'latency' | 'latency+cost';
+  changed: string;
+  basis: string;
+  note: string;
+  evidence: {
+    before: { runId: string; worldSeed: number; wallClockMs: number; mode: 'sequential' | 'parallel'; cacheHits: number };
+    after: { runId: string; worldSeed: number; wallClockMs: number; mode: 'sequential' | 'parallel'; cacheHits: number };
+    deltaMs: number;
+    improvementPct: number | null;
+    basis: string;
+  } | null;
+  emptyStateReason: string;
+}
+
+/** GET /api/v1/metrics → latency section: declared SLOs + observed stats. */
+export interface SloStatContract {
+  id: string;
+  label: string;
+  covers: string;
+  targetP95Ms: number;
+  basis: string;
+  observations: number;
+  totalObservations: number;
+  breaches: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  percentileMethod: string;
+  lastObservation: {
+    requestId: string | null;
+    route: string;
+    method: string;
+    status: number;
+    durationMs: number;
+    at: string;
+  } | null;
+}
+
 // ─── Compute Broker (provider-neutral, ADR-0003) ────────────────────────────
 export interface ComputeRequest {
   workload: string;

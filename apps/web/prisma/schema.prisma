@@ -46,6 +46,7 @@ model Tenant {
   garmentAssets  GarmentAsset[]
   tryOnJobs      TryOnJob[]
   exportJobs     ExportJob[]
+  costBudgets    CostBudget[]
 }
 
 model User {
@@ -888,6 +889,38 @@ model UsageRecord {
   createdAt DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+// ─── Cost budgets (P6.C12 / PR-13) ───────────────────────────────────────────
+// Tenant/application/pipeline-scoped cost budgets checked BEFORE the compute
+// broker dispatches a job (apps/web/src/lib/you/lab/cost-budgets.ts). Rows are
+// seeded by operators DIRECTLY (docs/COST_LATENCY.md) — there is deliberately
+// no API write surface: the contracts inventory is frozen and the TL freezes
+// new route operations at landing. Most-specific match wins:
+//   (tenant, application, pipeline) > (tenant, application) > (tenant, pipeline) > (tenant)
+// applicationId is the submitting APPLICATION ACTOR (an API key id —
+// AuthContext.actorType === 'application'); null = the tenant-wide budget
+// (interactive human sessions accrue with application null). pipeline is a
+// broker workload ('render.image' | 'render.video' | 'twin.compile') or null
+// for all workloads. budgetUsd must be finite and >= 0 — unlimited is NEVER a
+// row value (it is an explicit env opt-in only, never a default: fail-closed
+// law). Periods are ROLLING windows (the last periodHours), matching the C3
+// quota semantics. Accrual rows are UsageRecords with metric
+// 'compute.quoted_usd' and meta { workload, providerId, jobId, applicationActorId }.
+model CostBudget {
+  id            String   @id @default(cuid())
+  tenantId      String
+  applicationId String?
+  pipeline      String?
+  budgetUsd     Float
+  periodHours   Int      @default(24)
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, applicationId, pipeline])
 }
 
 // ─── Object storage (db backend) ────────────────────────────────────────────

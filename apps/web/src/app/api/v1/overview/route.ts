@@ -6,7 +6,9 @@ import { eventView } from '@/lib/you/core/views';
 import type { OverviewStats } from '@/lib/you/contracts';
 
 export async function GET(request: Request): Promise<Response> {
-  return handleRoute(async () => {
+  // P6.C12: observed under the declared 'api.read' SLO (docs/COST_LATENCY.md).
+  const observedRoute = (fn: () => Promise<Response>) => handleRoute(fn, { request, slo: 'api.read' });
+  return observedRoute(async () => {
     const auth = await requireApiAuth(request);
     const tenantId = auth.tenantId;
     const now = new Date();

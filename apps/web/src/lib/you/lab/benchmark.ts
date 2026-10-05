@@ -240,14 +240,42 @@ async function groundingCall(): Promise<GroundingCallResult> {
 }
 
 /** Evaluate all compiled organizations on the seeded world. */
+export type EvaluationMode = 'sequential' | 'parallel';
+
+export interface EvaluateOptions {
+  /**
+   * P6.C12: 'parallel' (the default — independent per-org evaluations run
+   * concurrently) or 'sequential' (the preserved pre-C12 code path, kept for
+   * before/after evidence reproduction). The mode changes ONLY the run's
+   * wall-clock: per-organization scores are computed independently per org
+   * and are byte-identical across modes (coverage/confidence/determinism are
+   * pure; each org's latencyMs keeps its own grounding measurement).
+   */
+  mode?: EvaluationMode;
+}
+
+export interface EvaluationStats {
+  readonly mode: EvaluationMode;
+  /** observed wall-clock of the whole evaluation stage (ms) — a real measurement. */
+  readonly wallClockMs: number;
+  /** each org's own latencyMs score, in organization order. */
+  readonly perOrgLatencyMs: number[];
+}
+
 export async function evaluateOrganizations(
   world: LabWorldSpec,
-  organizations: CompiledOrganization[]
-): Promise<{ evaluations: OrgEvaluation[]; aggregate: BenchmarkAggregate; llmCalls: number }> {
+  organizations: CompiledOrganization[],
+  opts: EvaluateOptions = {},
+): Promise<{ evaluations: OrgEvaluation[]; aggregate: BenchmarkAggregate; llmCalls: number; evaluation: EvaluationStats }> {
+  const mode: EvaluationMode = opts.mode === 'sequential' ? 'sequential' : 'parallel';
   const evaluations: OrgEvaluation[] = [];
   let llmCalls = 0;
 
-  for (const org of organizations) {
+  // One organization's evaluation — fully independent of every other org
+  // (its own grounding call, its own pure metrics, its own determinism
+  // re-runs). Extracted verbatim from the sequential loop by P6.C12 so the
+  // sequential mode IS the pre-C12 code path.
+  const evaluateOne = async (org: CompiledOrganization): Promise<OrgEvaluation> => {
     const grounding = await groundingCall();
     if (grounding.real) llmCalls += 1;
     const realLatency = grounding.real ? (grounding.latencyMs as number) : 0;
@@ -296,7 +324,7 @@ export async function evaluateOrganizations(
       ? 'mixed: modeled per-stage latencies + ONE observed provider grounding call (measurement)'
       : 'modeled only — the grounding call FAILED (no provider measurement claimed)';
 
-    evaluations.push({
+    return {
       organizationId: org.descriptor.organizationId,
       scores: {
         coverage: withReal.coverage,
@@ -331,8 +359,28 @@ export async function evaluateOrganizations(
         determinismCheck:
           'pure metric computation re-run twice with the same seed → stable-JSON equality; real provider latencies are excluded from the check',
       },
-    });
+    };
+  };
+
+  // P6.C12 optimization: the independent per-org evaluations run concurrently
+  // (Promise.all preserves input order, so the evaluations array order is
+  // identical in both modes). Sequential mode awaits one-by-one — the
+  // preserved pre-C12 behavior for before/after evidence.
+  const startedAt = Date.now();
+  if (mode === 'sequential') {
+    for (const org of organizations) {
+      evaluations.push(await evaluateOne(org));
+    }
+  } else {
+    const results = await Promise.all(organizations.map((org) => evaluateOne(org)));
+    evaluations.push(...results);
   }
+  const wallClockMs = Date.now() - startedAt;
+  const evaluation: EvaluationStats = {
+    mode,
+    wallClockMs,
+    perOrgLatencyMs: evaluations.map((e) => e.scores.latencyMs),
+  };
 
   // ranking (formula recorded verbatim in the aggregate)
   const formula =
@@ -358,5 +406,6 @@ export async function evaluateOrganizations(
       formula,
     },
     llmCalls,
+    evaluation,
   };
 }

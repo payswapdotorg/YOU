@@ -86,9 +86,10 @@ import {
   buildRenderSections,
   buildTwinCompileSections,
 } from '../core/artifact-sections';
-import { generateWorld } from './world';
 import { compileOrganizations, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations } from './benchmark';
+import { cachedCompileOrganizations, cachedGenerateWorld } from './hot-path-cache';
+import { generateWorld } from './world';
 import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, routedRenderProvider, embeddedComputeRoutingOf, type ComputeQuote, type ComputeSubmission } from './compute';
 import { recordRegionFailures } from './failure-atlas';
 import { hashString, makeRng } from './determinism';
@@ -1903,12 +1904,19 @@ registerExecutor({
     const objectiveCode = optString(input, 'objectiveCode') ?? 'HUMAN-RECON-001';
     const worldSeed = typeof input.worldSeed === 'number' ? Math.floor(input.worldSeed) : 42;
     const benchmarkRunId = optString(input, 'benchmarkRunId');
+    // P6.C12: evaluation mode — 'parallel' is the optimized default; the
+    // env (YOU_LAB_EVALUATION_MODE) overrides the default, the per-run input
+    // overrides the env (controlled before/after experiments).
+    const evaluationMode =
+      input.evaluationMode === 'sequential' || input.evaluationMode === 'parallel'
+        ? input.evaluationMode
+        : (process.env.YOU_LAB_EVALUATION_MODE === 'sequential' ? 'sequential' : 'parallel');
     const steps = new Steps([
       ['objective', 'Load lab objective'],
       ['pipelines', 'Load baseline pipelines'],
       ['world', `Generate deterministic world (seed ${worldSeed})`],
       ['compile', 'Compile organizations (generalist / hand-designed / searched)'],
-      ['evaluate', 'Evaluate on seeded world (deterministic simulation + real grounding calls)'],
+      ['evaluate', `Evaluate on seeded world (${evaluationMode} org evaluation, deterministic simulation + real grounding calls)`],
       ['persist', 'Persist BenchmarkRun + EvaluationReports'],
       ['failures', 'Record failure-atlas entries'],
       ['promotion', 'Draft promotion record for best organization'],
@@ -1949,20 +1957,35 @@ registerExecutor({
     await ctx.report({ steps: steps.all(), progress: 0.2 });
 
     await ctx.report({ steps: steps.running('world'), progress: 0.25 });
-    const world = generateWorld(worldSeed);
-    steps.done('world', world.worldId);
+    // P6.C12: deterministic sub-results behind the content-hash memo cache —
+    // the same seed returns the exact same world object; hits/misses are
+    // counted and persisted as evidence (never exaggerated — the absolute win
+    // is small and is reported as measured).
+    const worldGenStartedAt = Date.now();
+    const cachedWorld = cachedGenerateWorld(worldSeed, generateWorld);
+    const world = cachedWorld.world;
+    const worldGenMs = Date.now() - worldGenStartedAt;
+    steps.done('world', `${world.worldId}${cachedWorld.cache.hit ? ' (cache hit)' : ' (cold)'}`);
     await ctx.report({ steps: steps.all(), progress: 0.3 });
 
     await ctx.report({ steps: steps.running('compile'), progress: 0.35 });
-    const organizations = compileOrganizations(worldSeed, pipelines);
-    steps.done('compile', `${organizations.length} organizations`);
+    const compileStartedAt = Date.now();
+    const cachedOrgs = cachedCompileOrganizations(worldSeed, pipelines, compileOrganizations);
+    const organizations = cachedOrgs.organizations;
+    const compileMs = Date.now() - compileStartedAt;
+    steps.done(
+      'compile',
+      `${organizations.length} organizations${cachedOrgs.cache.hit ? ' (cache hit)' : ' (cold)'}`,
+    );
     await ctx.report({ steps: steps.all(), progress: 0.4 });
 
     await ctx.report({ steps: steps.running('evaluate'), progress: 0.45 });
-    const { evaluations, aggregate, llmCalls } = await evaluateOrganizations(world, organizations);
+    const { evaluations, aggregate, llmCalls, evaluation } = await evaluateOrganizations(world, organizations, {
+      mode: evaluationMode,
+    });
     steps.done(
       'evaluate',
-      `best: ${aggregate.bestOrganizationId} (grounding calls: ${llmCalls} real)`
+      `best: ${aggregate.bestOrganizationId} (grounding calls: ${llmCalls} real; ${evaluationMode} wall-clock ${evaluation.wallClockMs}ms)`
     );
     await ctx.report({ steps: steps.all(), progress: 0.7 });
 
@@ -2000,6 +2023,29 @@ registerExecutor({
           scores: e.scores,
           reproducible: e.reproducible,
         })),
+        // P6.C12 — cost/latency optimization evidence (observed measurements;
+        // the wiring in lib/you/lab/optimization-evidence.ts pairs runs into
+        // before/after records and surfaces them via GET /api/v1/usage):
+        //   evaluation — the run's evaluation mode + observed wall-clock;
+        //   compile — content-hash cache stats for the deterministic world /
+        //   compiled organizations (cold vs warm pairs are the cache evidence).
+        costLatency: {
+          evaluation: {
+            mode: evaluation.mode,
+            wallClockMs: evaluation.wallClockMs,
+            perOrgLatencyMs: evaluation.perOrgLatencyMs,
+          },
+          compile: {
+            worldKey: cachedWorld.cache.key,
+            worldCacheHit: cachedWorld.cache.hit,
+            orgKey: cachedOrgs.cache.key,
+            orgCacheHit: cachedOrgs.cache.hit,
+            cacheHits: cachedWorld.cache.hits + cachedOrgs.cache.hits,
+            cacheMisses: cachedWorld.cache.misses + cachedOrgs.cache.misses,
+            worldCompileMs: worldGenMs + compileMs,
+          },
+          optimizationVersion: 'p6/c12',
+        },
       }),
       finishedAt: now,
     };

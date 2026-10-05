@@ -7,7 +7,7 @@ import type {
   F1ConsentStatements, F1EvidenceManifest, F1ReviewState, F1StepCheckpoint,
   JobView, LabObjectiveView, OverviewStats, PerformanceView, PipelineCandidateView,
   PromotionRecordView, RenderJobView, RenderStyle, SessionInfo, SolutionArtifactView,
-  TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary,
+  TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary, CostUsageSection, OptimizationEvidenceView,
   WebhookEndpointView, ConsentScope, CaptureRegion,
 } from '../contracts';
 // Template view types are lane-owned by core/templates (W2.B) — type-only
@@ -204,6 +204,16 @@ export interface BreakerStatusView {
   failureCount: number;
 }
 
+/** GET /api/v1/usage response — P6.C12 extended the shape ADDITIVELY: the
+ * legacy metrics/totals fields are unchanged; cost + optimizations are
+ * OPTIONAL so older deployments (pre-C12) still parse for the legacy
+ * consumers (tolerant client law — absent sections render as honest
+ * unavailable states, never fabricated). */
+export type UsageSummaryView = UsageSummary & {
+  cost?: CostUsageSection;
+  optimizations?: OptimizationEvidenceView[];
+};
+
 /** GET /api/v1/metrics response (operator-gated). */
 export interface MetricsView {
   scope: {
@@ -223,6 +233,35 @@ export interface MetricsView {
   };
   /** Tenant-scoped job counts by status (dead included). */
   jobs: Record<string, number>;
+  /** P6.C12: declared SLOs + observed latency stats (absent pre-C12). */
+  latency?: {
+    slos: SloStatView[];
+    scope: string;
+    honesty: string[];
+  };
+}
+
+/** One SLO's declared target + observed stats (GET /api/v1/metrics latency). */
+export interface SloStatView {
+  id: string;
+  label: string;
+  covers: string;
+  targetP95Ms: number;
+  basis: string;
+  observations: number;
+  totalObservations: number;
+  breaches: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  percentileMethod: string;
+  lastObservation: {
+    requestId: string | null;
+    route: string;
+    method: string;
+    status: number;
+    durationMs: number;
+    at: string;
+  } | null;
 }
 
 // ─── P6.B9 — API playground surfaces (the Develop playground routes) ────────
@@ -538,7 +577,7 @@ export const api = {
       call<ApiKeySecret>('/api-keys', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),
     revokeKey: (id: string) => call<void>(`/api-keys/${id}`, { method: 'DELETE' }),
     events: (params?: { type?: string; limit?: number }) => call<EventRecordView[]>(`/events${qs(params ?? {})}`),
-    usage: () => call<UsageSummary>('/usage'),
+    usage: () => call<UsageSummaryView>('/usage'),
     webhooks: () => call<WebhookEndpointView[]>('/webhooks'),
     createWebhook: (body: { url: string; events: string[] }, idem?: string) =>
       call<WebhookEndpointView>('/webhooks', { method: 'POST', body: JSON.stringify(body), idempotencyKey: idem }),

@@ -4,10 +4,11 @@
 // Free-tier development environment notice (DEPLOYMENT.md): free tiers are
 // development accelerators only, never hard dependencies. No fake pricing.
 // ═══════════════════════════════════════════════════════════════════════════
-import { CreditCard, Info, Leaf } from 'lucide-react';
+import { CreditCard, Gauge, Info, Leaf } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader, SectionCard } from '@/components/you/shared/primitives';
 import { UsagePanel } from '@/components/you/develop/usage-panel';
+import { CostLatencyPanel } from '@/components/you/develop/cost-latency-panel';
 
 export function UsageView() {
   return (
@@ -15,11 +16,20 @@ export function UsageView() {
       <PageHeader
         eyebrow="Account"
         title="Usage & Billing"
-        description="Metered platform usage for this tenant — evidence storage, jobs, renders and LLM calls."
+        description="Metered platform usage for this tenant — evidence storage, jobs, renders, LLM calls, cost budgets and latency SLOs."
         actions={<Badge variant="outline" className="gap-1.5 text-muted-foreground"><Leaf className="size-3" aria-hidden /> development environment</Badge>}
       />
 
       <UsagePanel />
+
+      {/* ── P6.C12: cost & latency dashboard (budgets, SLOs, optimization evidence) ── */}
+      <SectionCard
+        title="Cost & Latency"
+        description="P6.C12 — enforced budgets, measured hot paths, evidence-backed optimizations"
+        icon={Gauge}
+      >
+        <CostLatencyPanel />
+      </SectionCard>
 
       <SectionCard title="Environment" description="How this deployment is metered" icon={Info}>
         <div className="space-y-3 text-sm text-muted-foreground">
@@ -30,7 +40,8 @@ export function UsageView() {
           </p>
           <p>
             No billing is enabled in this environment and no pricing is implied by the numbers above — they are raw
-            metered quantities, not invoices.
+            metered quantities, not invoices. Quoted-cost accrual is labeled modeled (docs/COST_LATENCY.md): provider
+            pricing is not exposed to this sandbox.
           </p>
         </div>
       </SectionCard>

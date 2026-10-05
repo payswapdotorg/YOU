@@ -2,12 +2,15 @@
 // POST /api/v1/renders — validate twin+version, consent "render", create
 // RenderJob row, then submit the durable render.image/render.video job
 // THROUGH THE COMPUTE BROKER (P6.C3: submitComputeRouted — enable-list
-// routing, per-provider breaker admission, the per-tenant quoted-cost guard,
-// routing record + quote embedded in the durable job). Returns {jobId}.
+// routing, per-provider breaker admission, the cost-budget guard (P6.C12
+// PR-13: db-backed tenant/application/pipeline budgets with env/default
+// fail-closed fallback), routing record + quote embedded in the durable
+// job). Returns {jobId}.
 //
 // Broker-refusal envelopes (honest, mapped):
-//   402 compute_quota_exceeded    — the per-tenant quoted-cost ceiling refused
-//                                   the submit (YOU_COMPUTE_TENANT_MAX_COST_USD)
+//   402 compute_quota_exceeded    — the cost-budget guard refused the submit
+//                                   (CostBudget rows > YOU_COMPUTE_TENANT_MAX_COST_USD
+//                                   > the documented fail-closed default)
 //   503 service_unavailable       — the routed provider's breaker is open
 //                                   (Retry-After) or no enabled provider could
 //                                   serve the workload (every skip reason in
@@ -115,6 +118,9 @@ export async function POST(request: Request): Promise<Response> {
         workload: jobKind,
         tenantId: auth.tenantId,
         adapter: adapter ?? undefined,
+        // P6.C12 (PR-13): application-scoped budgets + accrual — the API key
+        // actor id when the submit is application-authenticated
+        applicationActorId: auth.actorType === 'application' ? auth.actorId : undefined,
         input: {
           renderJobId: renderJob.id,
           twinId: twin.id,

@@ -446,6 +446,9 @@ test('cost guard: a submit that exceeds the tenant ceiling is refused 402, count
   // legs' quoted spend: $0.04 (succeeded) + $0.04 (dead) + $0.04 (svg is
   // zero-cost) = $0.08 of modeled window spend — the $0.05 ceiling must refuse
   // the next $0.04 hosted render BEFORE any provider call.
+  // P6.C12 (PR-13): the guard reads the durable quoted-cost accrual
+  // (usage metric "compute.quoted_usd") — the same rows the earlier legs'
+  // broker submits wrote — so the window spend survives the server reboot.
   await killTree();
   cookie = null;
   mock.submitScript.length = 0; // default success script (the guard must refuse first)
@@ -464,10 +467,13 @@ test('cost guard: a submit that exceeds the tenant ceiling is refused 402, count
   });
   assert.equal(res.status, 402, `the over-ceiling submit must be refused 402 (got ${res.status}: ${res.text})`);
   assert.equal(res.json.error.code, 'compute_quota_exceeded');
-  assert.match(res.json.error.message, /ceiling \$0\.05/);
-  assert.equal(res.json.error.details.ceilingUsd, 0.05);
+  // P6.C12 envelope: budget language + the budgetSource disclosure (the env
+  // ceiling is the tenant-wide fallback when no db CostBudget row matches)
+  assert.match(res.json.error.message, /budget \$0\.05/);
+  assert.equal(res.json.error.details.budgetUsd, 0.05);
+  assert.equal(res.json.error.details.budgetSource, 'env');
   assert.equal(res.json.error.details.quotedUsd, 0.04);
-  assert.ok(res.json.error.details.windowSpendUsd >= 0.08, 'the window spend counts the earlier broker submits (conservative)');
+  assert.ok(res.json.error.details.accruedUsd >= 0.08, 'the accrued spend counts the earlier broker submits (conservative)');
   assert.equal(mock.calls.length, callsBefore, 'the guard refused BEFORE any provider egress');
 
   // the refused render row records the honest refusal (never queued forever)
