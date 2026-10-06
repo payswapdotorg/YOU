@@ -1,4 +1,4 @@
-0e224eaada3dbd27323ccb5503b0a9d8b80301a88857c110ce64d8ccd988905d  contracts/openapi/v1/openapi.yaml
+9e6631eec92b01bb1b251130131659bce377e4a80ee11816e924eda7f5a947d6  contracts/openapi/v1/openapi.yaml
 cbba3557615df810983219b09e0e2e18683f40aa0866196f237da62dc6395b76  contracts/htir/v1/htir.schema.json
 a53f00a112cf37967b5137a8d73e925efb2c41cabdb90db628ef5fdcbee297b2  contracts/lab/v1/world.schema.json
 34cd2f7bd7b738b083589b8967b3ad9fe71fe45565a8c73f2f5f5596af480a2e  contracts/events/v1/agent-performance-events.schema.json
