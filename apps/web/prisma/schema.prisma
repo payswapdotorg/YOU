@@ -415,6 +415,8 @@ model EvidenceRequest {
   expectedSignal   String
   scope            String // privacy/consent scope statement
   status           String   @default("open") // open | fulfilled | expired
+  source           String   @default("manual") // manual | lab — P6.C10: who created the request (the Lab's Capture Scientist creates 'lab')
+  originFailureId  String?  // P6.C10: the FailureCase the Lab derived this request from (source='lab' only)
   createdAt        DateTime @default(now())
 
   captureSession CaptureSession? @relation(fields: [captureSessionId], references: [id])

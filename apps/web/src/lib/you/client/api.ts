@@ -5,7 +5,8 @@ import type {
   BenchmarkRunView, CaptureSessionView, ConsentGrantView, EventRecordView,
   EvidenceAssetView, EvidenceRequestView, FailureAtlasView, FailureCaseView, FeedbackRequestView,
   F1ConsentStatements, F1EvidenceManifest, F1ReviewState, F1StepCheckpoint,
-  JobView, LabObjectiveView, OverviewStats, PerformanceView, PipelineCandidateView,
+  JobView, LabMutateResponse, LabObjectiveView, LabPipelineGatesView,
+  LabPromoteResponse, OverviewStats, PerformanceView, PipelineCandidateView,
   PromotionRecordView, RenderJobView, RenderStyle, RunCompareView, SessionInfo, SolutionArtifactView,
   TechnologyCandidateView, TwinVersionView, TwinView, UsageSummary, CostUsageSection, OptimizationEvidenceView,
   WebhookEndpointView, ConsentScope, CaptureRegion,
@@ -578,6 +579,29 @@ export const api = {
     pipelines: () => call<PipelineCandidateView[]>('/lab/pipelines'),
     failures: () => call<FailureCaseView[]>('/lab/failures'),
     promotions: () => call<PromotionRecordView[]>('/lab/promotions'),
+    // P6.C10 — the promotion lifecycle + the genome loop + the scientist queue.
+    gates: (id: string) => call<LabPipelineGatesView>(`/lab/pipelines/${id}/gates`),
+    promote: (body: {
+      pipelineId: string;
+      action: 'promote' | 'reject' | 'revert' | 'retire';
+      reason?: string;
+      note?: string;
+      benchmarkRunIds?: string[];
+      to?: string;
+    }) => call<LabPromoteResponse>('/lab/promotions', { method: 'POST', body: JSON.stringify(body) }),
+    mutate: (
+      id: string,
+      body: { mutationSeed?: number; worldSeed?: number; objectiveCode?: string },
+      idem?: string,
+    ) => call<LabMutateResponse>(`/lab/pipelines/${id}/mutate`, {
+      method: 'POST', body: JSON.stringify(body), idempotencyKey: idem,
+    }),
+    captureRequests: (opts: { status?: 'open' | 'fulfilled' | 'expired' } = {}) =>
+      call<EvidenceRequestView[]>(`/lab/capture-requests${qs(opts)}`),
+    requestFailureEvidence: (id: string, idem?: string) =>
+      call<EvidenceRequestView>(`/lab/failures/${id}/evidence-request`, {
+        method: 'POST', body: '{}', idempotencyKey: idem,
+      }),
   },
 
   // ─── Develop ──────────────────────────────────────────────────────────────

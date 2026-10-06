@@ -442,6 +442,7 @@ export function promotionRecordView(p: PromotionRecord): PromotionRecordView {
     toStatus: p.toStatus,
     decision: p.decision as PromotionRecordView['decision'],
     evidence: parseJson<Record<string, unknown>>(p.evidence, {}),
+    decidedBy: p.decidedBy, // P6.C10: server-derived actor, recorded verbatim
     createdAt: iso(p.createdAt),
   };
 }
@@ -489,6 +490,8 @@ export function evidenceRequestView(r: EvidenceRequest): EvidenceRequestView {
     expectedSignal: r.expectedSignal,
     scope: r.scope,
     status: r.status as EvidenceRequestView['status'],
+    source: (r.source as EvidenceRequestView['source']) ?? 'manual', // P6.C10
+    originFailureId: r.originFailureId, // P6.C10
     createdAt: iso(r.createdAt),
   };
 }

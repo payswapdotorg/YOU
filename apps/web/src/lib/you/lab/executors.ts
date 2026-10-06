@@ -21,6 +21,7 @@ import type {
   JobExecutor,
   JobKind,
   JobStep,
+  OrganizationDescriptor,
   RenderStyle,
   SolutionArtifactManifest,
 } from '../contracts';
@@ -86,12 +87,14 @@ import {
   buildRenderSections,
   buildTwinCompileSections,
 } from '../core/artifact-sections';
-import { compileOrganizations, type PipelineRef } from './organization-compiler';
+import { compileOrganizations, compileFromGenome, type PipelineRef } from './organization-compiler';
 import { evaluateOrganizations, groundingCall } from './benchmark';
 import { cachedCompileOrganizations, cachedGenerateWorld } from './hot-path-cache';
 import { generateWorld } from './world';
+import { LAB_MUTATE_JOB_KIND, compareOffspring, lineageSummary, naturalChildName } from './mutation';
 import { quoteCompute, LOCAL_EXECUTOR_PROVIDER_ID, routedRenderProvider, embeddedComputeRoutingOf, type ComputeQuote, type ComputeSubmission } from './compute';
 import { recordClassifiedFailureCase, recordRegionFailures } from './failure-atlas';
+import { mutateGenome } from './genome';
 // P6.C11 — benchmark artifacts + Failure Atlas production surface: the
 // write-once run manifest, the run-comparison/regression contract, the
 // soul-swap scenario (SOUL-SWAP-001) and the failure-code taxonomy.
@@ -2323,6 +2326,254 @@ registerExecutor({
       entities: [
         { type: 'benchmarkRun', id: run.id },
         { type: 'pipelineCandidate', id: bestPipelineId },
+      ],
+    };
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// lab.mutate — the Pipeline Genome loop (P6.C10)
+// Deterministic mutation (same parent + same seed → the same offspring —
+// natural-key child naming reuses the child row, never duplicates), a REAL
+// parent-vs-offspring benchmark on the same seeded world (one grounding
+// call per organization attempted; honest modeled-only degrade when the
+// provider is unavailable), the honest comparison on the documented
+// weighted formula, failure-atlas entries for the offspring, and an
+// auto-draft to benchmarked ONLY when the offspring wins. Retired parents
+// are refused (the route guards; the executor re-checks — defense in
+// depth).
+// ═══════════════════════════════════════════════════════════════════════════
+registerExecutor({
+  kind: LAB_MUTATE_JOB_KIND,
+  async execute(input, ctx) {
+    const pipelineId = reqString(input, 'pipelineId');
+    const mutationSeedRaw = input.mutationSeed;
+    if (typeof mutationSeedRaw !== 'number' || !Number.isInteger(mutationSeedRaw) || Math.abs(mutationSeedRaw) > 2 ** 31) {
+      throw new Error('validation_failed: input.mutationSeed must be a 31-bit integer');
+    }
+    const mutationSeed = mutationSeedRaw;
+    const worldSeed = typeof input.worldSeed === 'number' && Number.isInteger(input.worldSeed)
+      ? input.worldSeed
+      : 42;
+    const objectiveCode = optString(input, 'objectiveCode') ?? 'HUMAN-RECON-001';
+    const steps = new Steps([
+      ['load', 'Load the parent pipeline and genome'],
+      ['mutate', 'Deterministically mutate the genome'],
+      ['offspring', 'Create the child pipeline (natural key)'],
+      ['benchmark', 'Benchmark parent vs offspring on the seeded world'],
+      ['compare', 'Compare on the documented weighted formula'],
+      ['persist', 'Record lineage, failures and the honest verdict'],
+    ]);
+
+    await ctx.report({ steps: steps.running('load'), progress: 0.05, status: 'running' });
+    const parent = await db.pipelineCandidate.findUnique({ where: { id: pipelineId } });
+    if (!parent) throw new Error(`not_found: pipeline candidate ${pipelineId}`);
+    if (parent.status === 'retired') {
+      throw new Error('conflict: retired pipelines are not mutated — un-retire (revert) first if this lineage should continue');
+    }
+    const objective = await db.labObjective.findUnique({ where: { code: objectiveCode } });
+    if (!objective) throw new Error(`not_found: lab objective ${objectiveCode}`);
+    const parentGenome = parseJsonField<PipelineRef['genome']>(parent.genome, {
+      stages: [], parameters: {}, skills: [], compute: { class: 'unknown' }, evaluation: { rubric: [], seed: worldSeed },
+    });
+    steps.done('load', `${parent.name} (generation ${parent.generation}, status ${parent.status})`);
+    await ctx.report({ steps: steps.all(), progress: 0.15 });
+
+    await ctx.report({ steps: steps.running('mutate'), progress: 0.2 });
+    const childGenome = mutateGenome(parentGenome, mutationSeed);
+    const childName = naturalChildName(parent.name, mutationSeed);
+    const mutations = Array.isArray(childGenome.parameters.mutations)
+      ? childGenome.parameters.mutations.filter((m): m is string => typeof m === 'string')
+      : [];
+    steps.done('mutate', `${mutations.length} recorded mutations (seed ${mutationSeed}) → ${childName}`);
+    await ctx.report({ steps: steps.all(), progress: 0.3 });
+
+    await ctx.report({ steps: steps.running('offspring'), progress: 0.35 });
+    // natural key: same parent + same seed → the same child row (reuse, no duplicates)
+    let child = await db.pipelineCandidate.findFirst({ where: { name: childName } });
+    if (child) {
+      child = await db.pipelineCandidate.update({
+        where: { id: child.id },
+        data: {
+          genome: JSON.stringify(childGenome),
+          generation: parent.generation + 1,
+          parentId: parent.id,
+          origin: 'searched',
+        },
+      });
+    } else {
+      child = await db.pipelineCandidate.create({
+        data: {
+          name: childName,
+          genome: JSON.stringify(childGenome),
+          generation: parent.generation + 1,
+          parentId: parent.id,
+          origin: 'searched',
+          status: 'draft',
+        },
+      });
+    }
+    steps.done('offspring', `${childName} (generation ${child.generation})`);
+    await ctx.report({ steps: steps.all(), progress: 0.45 });
+
+    await ctx.report({ steps: steps.running('benchmark'), progress: 0.5 });
+    const world = generateWorld(worldSeed);
+    const parentOrg = compileFromGenome(
+      parentGenome,
+      parent.origin as OrganizationDescriptor['origin'],
+      `org-mutate-${parent.id}`,
+      `${parent.name} (parent)`,
+      parent.id,
+    );
+    const childOrg = compileFromGenome(
+      childGenome,
+      'searched',
+      `org-mutate-${child.id}`,
+      `${childName} (offspring)`,
+      child.id,
+    );
+    const { evaluations, aggregate, llmCalls } = await evaluateOrganizations(world, [parentOrg, childOrg]);
+    const now = new Date();
+    const run = await db.benchmarkRun.create({
+      data: {
+        objectiveId: objective.id,
+        worldSeed,
+        status: 'succeeded',
+        organizations: JSON.stringify([parentOrg.descriptor, childOrg.descriptor]),
+        metrics: JSON.stringify({
+          simulated: true,
+          simulationNote:
+            'Lab genome-loop results are SIMULATED research truth (deterministic seeded simulation + explicitly-labeled real provider grounding measurements); never production human truth',
+          kind: 'lab.mutate',
+          mutationSeed,
+          parentPipelineId: parent.id,
+          childPipelineId: child.id,
+          aggregate,
+          perOrganization: evaluations.map((e) => ({
+            organizationId: e.organizationId,
+            scores: e.scores,
+            reproducible: e.reproducible,
+          })),
+        }),
+        startedAt: now,
+        finishedAt: now,
+      },
+    });
+    for (const ev of evaluations) {
+      await db.evaluationReport.create({
+        data: {
+          benchmarkRunId: run.id,
+          organizationId: ev.organizationId,
+          scores: JSON.stringify(ev.scores),
+          reproducible: ev.reproducible,
+          seed: worldSeed,
+          detail: JSON.stringify(ev.detail),
+        },
+      });
+    }
+    steps.done('benchmark', `run ${run.id} — ${evaluations.length} organizations, ${llmCalls} real grounding calls`);
+    await ctx.report({ steps: steps.all(), progress: 0.75 });
+
+    await ctx.report({ steps: steps.running('compare'), progress: 0.8 });
+    const evalFor = (organizationId: string) =>
+      evaluations.find((e) => e.organizationId === organizationId) ?? null;
+    const parentEval = evalFor(parentOrg.descriptor.organizationId);
+    const childEval = evalFor(childOrg.descriptor.organizationId);
+    if (!parentEval || !childEval) {
+      throw new Error('internal: parent/offspring evaluation missing from the benchmark result');
+    }
+    const comparison = compareOffspring(parentEval.scores, childEval.scores);
+    steps.done(
+      'compare',
+      comparison.childBetter
+        ? `offspring wins (${comparison.childScore} vs parent ${comparison.parentScore}, Δ ${comparison.delta})`
+        : `offspring does not win (${comparison.childScore} vs parent ${comparison.parentScore}, Δ ${comparison.delta})`,
+    );
+    await ctx.report({ steps: steps.all(), progress: 0.85 });
+
+    await ctx.report({ steps: steps.running('persist'), progress: 0.9 });
+    const failureIds = await recordRegionFailures(db, run.id, worldSeed, [childEval]);
+    let childStatus = child.status;
+    if (comparison.childBetter && child.status === 'draft') {
+      await db.promotionRecord.create({
+        data: {
+          pipelineId: child.id,
+          fromStatus: 'draft',
+          toStatus: 'benchmarked',
+          decision: 'drafted',
+          evidence: JSON.stringify({
+            benchmarkRunId: run.id,
+            mutationSeed,
+            worldSeed,
+            objectiveCode,
+            comparison,
+            note: 'auto-draft — the offspring won the parent-vs-offspring benchmark on the documented weighted formula; TL owns promotion',
+            simulated: true,
+          }),
+          decidedBy: 'lab.mutate executor (auto-draft on offspring win; TL owns promotion)',
+        },
+      });
+      const updated = await db.pipelineCandidate.update({
+        where: { id: child.id },
+        data: { status: 'benchmarked' },
+      });
+      childStatus = updated.status;
+    }
+    const lineage = lineageSummary(parent, mutationSeed, childGenome.parameters.mutations);
+    steps.done(
+      'persist',
+      `${failureIds.length} failure cases for the offspring; child status "${childStatus}"`,
+    );
+    await ctx.report({ steps: steps.all(), progress: 1 });
+
+    await emitEvent(ctx.tenantId, 'lab.mutation.succeeded', 'pipeline_candidate', child.id, {
+      jobId: ctx.jobId,
+      benchmarkRunId: run.id,
+      parentPipelineId: parent.id,
+      childPipelineId: child.id,
+      childName,
+      mutationSeed,
+      worldSeed,
+      objectiveCode,
+      childBetter: comparison.childBetter,
+      simulated: true,
+    });
+    await recordLlmCalls(ctx.tenantId, llmCalls, { jobKind: 'lab.mutate', benchmarkRunId: run.id });
+    await recordUsage(ctx.tenantId, 'job.lab.mutate', 1, {
+      benchmarkRunId: run.id,
+      pipelineId: parent.id,
+      childPipelineId: child.id,
+      mutationSeed,
+      worldSeed,
+    });
+
+    return {
+      output: {
+        benchmarkRunId: run.id,
+        parentPipelineId: parent.id,
+        parentName: parent.name,
+        childPipelineId: child.id,
+        childName,
+        childStatus,
+        mutationSeed,
+        worldSeed,
+        objectiveCode,
+        comparison: {
+          childBetter: comparison.childBetter,
+          delta: comparison.delta,
+          parentScore: comparison.parentScore,
+          childScore: comparison.childScore,
+          formula: comparison.formula,
+          note: comparison.note,
+        },
+        lineage,
+        failureCaseIds: failureIds,
+        simulated: true,
+      },
+      entities: [
+        { type: 'benchmarkRun', id: run.id },
+        { type: 'pipelineCandidate', id: child.id },
+        { type: 'pipelineCandidate', id: parent.id },
       ],
     };
   },

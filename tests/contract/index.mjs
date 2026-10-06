@@ -57,3 +57,7 @@ import './lab-cost-latency.test.mjs';
 import './lab-benchmark-atlas.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
+// P6.C10 — the lab-prod suite is NOT imported (same law as the suites above:
+// its executors-chain compile breaches the aggregated shared server's 4 GiB
+// cgroup ceiling — see the note in tests/index.mjs; it boots its own lean
+// server standalone):   node --test tests/contract/lab-prod.test.mjs

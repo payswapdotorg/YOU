@@ -149,3 +149,16 @@ import './contract/lab-benchmark-atlas.test.mjs';
 
 globalThis.__YOU_TEST_AGGREGATED__ = true;
 
+
+// P6.C10 — the Lab productionization suite is STANDALONE-BY-DESIGN (the
+// storage-db law above): in the aggregated process it would be the first
+// suite to compile the lab executors import chain (the biggest module graph
+// in apps/web — no baseline suite touches POST /lab/runs or the mutate
+// route), and on the aggregated shared server (measured peak RSS ≈ 3.1 GiB
+// across the baseline) that compile pushes next dev past the station's
+// 4 GiB cgroup ceiling — the OOM killer takes the shared server mid-suite
+// (reproduced twice, with the baseline re-verified green without the
+// import). Deliberately NOT imported here. The full station gate is BOTH
+// commands, in order:
+//   node --test tests/                             (aggregated, this file)
+//   node --test tests/contract/lab-prod.test.mjs   (standalone, its own lean server)

@@ -13,6 +13,9 @@ import type { PipelineGenome } from '../contracts';
 // precedent) so node:test's type-stripping resolver can load this module chain
 // directly — the extensionless bundler specifiers are not resolvable under
 // plain Node ESM.
+// P6.C10: the runtime import carries the .ts extension so the pure module is
+// node:test-importable (the runtime-core precedent; tsc-legal via
+// allowImportingTsExtensions) — the type-only import above stays erased.
 import { makeRng, round } from './determinism.ts';
 
 const SYMBOLIC_SUFFIXES = ['-fine', '-coarse', '-v2'] as const;

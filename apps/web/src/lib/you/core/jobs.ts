@@ -29,7 +29,8 @@ export type DurableJobKind =
   | 'agent.turn'
   | 'tryon.render' // P6.C8 lane-local widening — same law; TL adds it at landing
   | 'export.glb' // P6.C9 lane-local widening — same law; TL adds it at landing
-  | 'export.vrm'; // P6.C9 lane-local widening — same law; TL adds it at landing
+  | 'export.vrm' // P6.C9 lane-local widening — same law; TL adds it at landing
+  | 'lab.mutate'; // P6.C10 lane-local widening — the Pipeline Genome loop; same law; TL adds it at landing
 
 /**
  * P6.A6-FULL lane-local widening: the frozen JobState union does not yet
@@ -144,6 +145,19 @@ const STEP_TEMPLATES: Record<DurableJobKind, { key: string; label: string }[]> =
     { key: 'geometry', label: 'Check HTIR geometry usability (fail-closed)' },
     { key: 'emit', label: 'Emit the deterministic VRM bundle (LODs + mapping)' },
     { key: 'persist', label: 'Persist export artifacts with the honest manifest' },
+  ],
+  // P6.C10 — the Pipeline Genome loop: deterministic mutation + a REAL
+  // parent-vs-offspring benchmark on the same seeded world (2 grounding
+  // calls attempted — honest modeled-only degrade when the provider is
+  // unavailable), the honest comparison on the documented weighted
+  // formula, auto-draft only when the offspring wins.
+  'lab.mutate': [
+    { key: 'load', label: 'Load the parent pipeline and genome' },
+    { key: 'mutate', label: 'Deterministically mutate the genome' },
+    { key: 'offspring', label: 'Create the child pipeline (natural key)' },
+    { key: 'benchmark', label: 'Benchmark parent vs offspring on the seeded world' },
+    { key: 'compare', label: 'Compare on the documented weighted formula' },
+    { key: 'persist', label: 'Record lineage, failures and the honest verdict' },
   ],
 };
 
