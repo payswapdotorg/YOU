@@ -200,10 +200,26 @@ paths:
     get:
       summary: Jobs item
       responses: {"200": {"description": "OK"}}
+  /lab/capture-requests:
+    get:
+      summary: lab — Capture Scientist queue, lab-derived evidence requests newest first (P6.C10)
+      responses: {"200": {"description": "OK"}}
   /lab/failures:
     get:
       summary: lab — failure catalogue
       responses: {"200": {"description": "OK"}}
+  /lab/failures/{id}/evidence-request:
+    post:
+      summary: lab — Capture Scientist targeted EvidenceRequest from a benchmark failure, honest 400 when no capture protocol maps (P6.C10)
+      responses: {"201": {"description": "Created"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}}
+  /lab/failures/{id}/remediate:
+    post:
+      summary: lab — failure remediation lifecycle, evidence-driven transitions with audit log (P6.C11)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "401": {"description": "Unauthorized"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
+  /lab/failures/atlas:
+    get:
+      summary: lab — Failure Atlas aggregation by code, region, pipeline, technology version and time window (P6.C11)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}}
   /lab/objectives:
     get:
       summary: lab — objectives
@@ -215,10 +231,21 @@ paths:
     get:
       summary: lab — pipelines
       responses: {"200": {"description": "OK"}}
+  /lab/pipelines/{id}/gates:
+    get:
+      summary: lab — promotion preview, the next target's evidence gates evaluated from real run data (P6.C10)
+      responses: {"200": {"description": "OK"}, "404": {"description": "Not Found"}}
+  /lab/pipelines/{id}/mutate:
+    post:
+      summary: lab — Pipeline Genome mutation + offspring benchmark as a durable lab.mutate job (P6.C10)
+      responses: {"202": {"description": "Accepted"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
   /lab/promotions:
     get:
       summary: lab — promotions
       responses: {"200": {"description": "OK"}}
+    post:
+      summary: lab — promotion lifecycle promote/reject/revert/retire with machine-checked evidence gates (P6.C10)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "404": {"description": "Not Found"}, "409": {"description": "Conflict"}}
   /lab/runs:
     post:
       summary: lab — runs
@@ -227,6 +254,14 @@ paths:
     get:
       summary: lab item
       responses: {"200": {"description": "OK"}}
+  /lab/runs/{id}/artifact:
+    get:
+      summary: lab — benchmark run artifact export, deterministic content-addressed JSON with X-Content-Sha256 + ETag (P6.C11)
+      responses: {"200": {"description": "OK"}, "401": {"description": "Unauthorized"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}}
+  /lab/runs/{id}/compare:
+    get:
+      summary: lab — run comparison + regression detection against a baseline on the same world seed (P6.C11)
+      responses: {"200": {"description": "OK"}, "400": {"description": "Bad Request"}, "401": {"description": "Unauthorized"}, "403": {"description": "Forbidden"}, "404": {"description": "Not Found"}}
   /lab/technologies:
     get:
       summary: lab — technologies
